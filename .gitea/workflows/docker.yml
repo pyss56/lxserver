@@ -16,7 +16,7 @@ concurrency:
 
 env:
   # Gitea 内置容器 registry 地址（与站点同域）
-  REGISTRY: git.pyss.cn:4430
+  REGISTRY: 10.3.3.15:3030
 
 jobs:
   build_and_push:
