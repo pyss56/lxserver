@@ -11,6 +11,15 @@ import path from 'path'
 // @ts-ignore
 import musicSdkRaw from '@/modules/utils/musicSdk/index.js'
 const musicSdk = musicSdkRaw as any
+// 按 id 从源取回单曲信息的模块（解析不到本地时，自动补取并加入收藏）
+// @ts-ignore
+import txMusicInfo from '@/modules/utils/musicSdk/tx/musicInfo.js'
+// @ts-ignore
+import wyMusicInfo from '@/modules/utils/musicSdk/wy/musicInfo.js'
+// @ts-ignore
+import { getMusicInfo as kgGetMusicInfo } from '@/modules/utils/musicSdk/kg/musicInfo.js'
+// @ts-ignore
+import { getMusicInfo as mgGetMusicInfo } from '@/modules/utils/musicSdk/mg/musicInfo.js'
 
 /**
  * Subsonic 协议处理器
@@ -620,6 +629,65 @@ class SubsonicHandler {
         }
 
         return null
+    }
+
+    /**
+     * 仅按 id 从源取回单曲信息（当本地/歌单/缓存都找不到时使用）。
+     * id 形如 `<source>_<songId>`，如 tx_002obe1W2NJqTY。
+     * 返回归一化后的 LX.Music.MusicInfo（确保有 id/source/songmid/name/singer），失败返回 null。
+     */
+    private async resolveMusicById(id: string): Promise<LX.Music.MusicInfo | null> {
+        const idx = id.indexOf('_')
+        if (idx <= 0) return null
+        const source = id.slice(0, idx)
+        const songId = id.slice(idx + 1)
+        if (!songId) return null
+        try {
+            let music: any = null
+            switch (source) {
+                case 'tx':
+                    music = await txMusicInfo(songId)
+                    break
+                case 'wy': {
+                    const raw: any = await wyMusicInfo(songId)
+                    if (raw) {
+                        music = {
+                            id: `wy_${songId}`,
+                            name: raw.name,
+                            singer: raw.artists ? raw.artists.map((a: any) => a.name).join('、') : '',
+                            source: 'wy',
+                            songmid: songId,
+                            interval: raw.dt ? String(Math.round(raw.dt / 1000)) : '0',
+                            img: raw.album?.picUrl ?? null,
+                            meta: {
+                                albumName: raw.album?.name,
+                                albumId: raw.album?.id,
+                                picUrl: raw.album?.picUrl,
+                            },
+                        }
+                    }
+                    break
+                }
+                case 'kg':
+                    music = await kgGetMusicInfo(songId)
+                    break
+                case 'mg':
+                    music = await mgGetMusicInfo(songId)
+                    break
+                default:
+                    // 其它源（如 kw/bd/xm）暂无可靠的「按 id 取单曲」接口，直接放弃
+                    return null
+            }
+            if (!music) return null
+            // 统一补齐 id / source，避免存入收藏后无法被后续查找识别
+            if (!music.source) music.source = source
+            if (!music.id) music.id = `${source}_${music.songmid || music.songId || songId}`
+            if (!music.songmid && music.songId) music.songmid = music.songId
+            return music as LX.Music.MusicInfo
+        } catch (e) {
+            console.warn(`[Subsonic] resolveMusicById ${id} 失败:`, (e as Error).message)
+            return null
+        }
     }
 
     // ─────────────────────────────────────────────
@@ -2052,9 +2120,23 @@ class SubsonicHandler {
             }
             // 其余按歌曲 id 处理
             try {
-                const found = await this.findMusicById(username, id)
+                let found = await this.findMusicById(username, id)
                 if (!found) {
-                    console.warn(`[Subsonic] ${action} 歌曲 ${id} 跳过：无法解析该歌曲(不在 收藏/默认/歌单/本地库/搜索缓存 中)，未做任何改动 (user=${username})`)
+                    // 本地/歌单/缓存都找不到 → 尝试按 id 从源取回，自动加入收藏
+                    const resolved = await this.resolveMusicById(id)
+                    if (!resolved) {
+                        console.warn(`[Subsonic] ${action} 歌曲 ${id} 跳过：无法解析该歌曲(不在 收藏/默认/歌单/本地库/搜索缓存 中，且源取回失败)，未做任何改动 (user=${username})`)
+                        continue
+                    }
+                    if (isStar) {
+                        await userSpace.listManage.listDataManage.listMusicAdd('love', [resolved], location)
+                        debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已从源取回并加入我的收藏(love) 《${resolved.name}》(user=${username})`)
+                    } else {
+                        await userSpace.listManage.listDataManage.listMusicRemove('love', [resolved.id])
+                        debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已从我的收藏(love) 移出 《${resolved.name}》(user=${username})`)
+                    }
+                    this.cacheOnlineSong(resolved)
+                    loveChanged = true
                     continue
                 }
                 if (isStar) {
