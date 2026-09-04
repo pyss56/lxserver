@@ -29,76 +29,6 @@ import crypto from 'node:crypto'
 import needle from 'needle'
 const { MusicTagger, MetaPicture } = require('music-tag-native')
 
-// ===== /api/music/download 透明转发磁盘缓存（归并到 fileCache 缓存目录，由共享库开关统一控制）=====
-function proxyCacheKey(urlStr: string, filename: string, quality?: string): string {
-  return crypto.createHash('sha1').update(`${urlStr}|${filename}|${quality || ''}`).digest('hex')
-}
-function mimeFromName(name: string): string {
-  const ext = path.extname(name).toLowerCase()
-  const map: Record<string, string> = {
-    '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.m4a': 'audio/mp4',
-    '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.wav': 'audio/wav',
-    '.ape': 'audio/x-ape', '.wma': 'audio/x-ms-wma', '.opus': 'audio/ogg',
-    '.mp4': 'video/mp4', '.webm': 'video/webm',
-  }
-  return map[ext] || 'application/octet-stream'
-}
-
-// 单飞合并（single-flight）：同一 pKey 同一时刻只允许一个请求回源并落盘，其余并发请求等待其完成后
-// 直接从已落盘的 pFile 命中返回。目的：① 避免缓存惊群（同一首歌被多人/多端同时播放时重复回源）；
-// ② 避免多个并发请求写同一个 tmpFile / pFile 导致缓存文件损坏。
-const proxyCacheInflight = new Map<string, Promise<void>>()
-const proxyCacheResolvers = new Map<string, () => void>()
-function releaseProxyLock(pKey: string) {
-  const r = proxyCacheResolvers.get(pKey)
-  if (r) { proxyCacheResolvers.delete(pKey); proxyCacheInflight.delete(pKey); r() }
-}
-// 从已落盘的代理缓存文件直接服务；命中返回 true，未命中/异常返回 false
-function serveProxyCacheHit(pFile: string, filename: string, req: any, res: any): boolean {
-  if (!fs.existsSync(pFile) || fs.statSync(pFile).size === 0) return false
-  const stat = fs.statSync(pFile)
-  let ctype = mimeFromName(filename)
-  const ctFile = pFile + '.ct'
-  if (fs.existsSync(ctFile)) { try { ctype = fs.readFileSync(ctFile, 'utf8').trim() } catch (_) { } }
-  const range = req.headers['range'] as string | undefined
-  if (range) {
-    const m = /bytes=(\d*)-(\d*)/.exec(range)
-    let start = m && m[1] ? parseInt(m[1], 10) : 0
-    let end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1
-    if (isNaN(start) || start < 0) start = 0
-    if (isNaN(end) || end >= stat.size) end = stat.size - 1
-    res.writeHead(206, {
-      'Content-Type': ctype,
-      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': (end - start + 1).toString(),
-      'Access-Control-Allow-Origin': '*',
-    })
-    fs.createReadStream(pFile, { start, end }).pipe(res)
-  } else {
-    res.writeHead(200, {
-      'Content-Type': ctype,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': stat.size.toString(),
-      'Access-Control-Allow-Origin': '*',
-    })
-    fs.createReadStream(pFile).pipe(res)
-  }
-  return true
-}
-
-// 代理缓存活跃读写计数：进入磁盘缓存读写路径时 +1，响应结束/中止时 -1。
-// 配合 pendingLibraryConfigApply，实现“当前无读取时再切换缓存落盘位置”。
-let proxyCacheActiveOps = 0
-let pendingLibraryConfigApply = false
-function maybeApplyLibraryConfigWhenIdle() {
-  if (pendingLibraryConfigApply && proxyCacheActiveOps === 0) {
-    pendingLibraryConfigApply = false
-    ;(fileCache as any).applyEffectiveLibraryConfig()
-    console.log('[ProxyCache] 已无活跃读写，应用缓存位置切换（运行期生效）')
-  }
-}
-
 // ===== Player Session Store =====
 const playerSessions = new Map<string, { createdAt: number }>()
 const SESSION_TTL = 24 * 60 * 60 * 1000 // 24小时
@@ -160,41 +90,6 @@ interface UserTokenConfig {
 /** 用户 Token 存储：token → { username, createdAt } */
 const userSessions = new Map<string, { username: string; createdAt: number }>()
 const USER_SESSION_TTL = 7 * 24 * 60 * 60 * 1000 // 7天
-
-/**
- * 会话持久化：将内存 userSessions 落盘，使服务重启后
- * 缓存文件 / 歌词等 URL 中内嵌的旧 session token 仍然有效（否则重启即 401）。
- */
-const getSessionsFile = () => path.join(global.lx.dataPath || path.join(process.cwd(), 'data'), 'userSessions.json')
-
-const loadUserSessions = () => {
-  try {
-    const file = getSessionsFile()
-    if (!fs.existsSync(file)) return
-    const arr = JSON.parse(fs.readFileSync(file, 'utf8')) as Array<{ token: string; username: string; createdAt: number }>
-    const now = Date.now()
-    let restored = 0
-    for (const s of arr) {
-      if (s && s.token && now - s.createdAt <= USER_SESSION_TTL) {
-        userSessions.set(s.token, { username: s.username, createdAt: s.createdAt })
-        restored++
-      }
-    }
-    if (restored) console.log(`[Session] 已从磁盘恢复 ${restored} 个用户会话`)
-  } catch (e) {
-    console.warn('[Session] 加载持久化会话失败:', e)
-  }
-}
-
-const saveUserSessions = () => {
-  try {
-    const file = getSessionsFile()
-    const arr = Array.from(userSessions.entries()).map(([token, s]) => ({ token, username: s.username, createdAt: s.createdAt }))
-    fs.writeFile(file, JSON.stringify(arr), 'utf8', () => {})
-  } catch (e) {
-    console.warn('[Session] 持久化会话失败:', e)
-  }
-}
 
 /** 持久化 Token 快速查找缓存：token → username */
 const persistentTokens = new Map<string, string>()
@@ -284,7 +179,6 @@ setTimeout(() => {
   if (global.lx.config && global.lx.config.users) {
     global.lx.config.users.forEach((u: any) => saveUserTokenConfig(u.name, getUserTokenConfig(u.name)))
   }
-  loadUserSessions()
 }, 5000)
 
 /**
@@ -361,7 +255,6 @@ setInterval(() => {
   for (const [token, session] of userSessions) {
     if (now - session.createdAt > USER_SESSION_TTL) userSessions.delete(token)
   }
-  saveUserSessions()
   // 清理加载到内存的过期 API Token（直接走内存 meta，不读磁盘）
   for (const [token, meta] of persistentTokenMeta) {
     if (meta.expiresAt && meta.expiresAt <= now) {
@@ -1952,7 +1845,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
             if (user) {
               const token = generateSessionId()
               userSessions.set(token, { username, createdAt: Date.now() })
-              saveUserSessions()
               loginLog.info(`User token issued: ${username} from ${ip}`)
               res.writeHead(200, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify({ success: true, token, username }))
@@ -1973,7 +1865,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
       if (pathname === '/api/user/logout' && req.method === 'POST') {
         const token = req.headers['x-user-token'] as string
         if (token) userSessions.delete(token)
-        saveUserSessions()
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ success: true }))
         return
@@ -2252,8 +2143,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
             // [核心逻辑] 如果是受限的公开用户，仅允许保存特定的 3 项设置
             if (resolvedUsername === '_open' && global.lx.config['user.enablePublicRestriction']) {
               const restrictedSettings: any = {}
-              // 存储策略(缓存/入库/歌词/命名/位置)已统一由服务端配置决定，不再开放给公开用户逐用户覆盖
-              const allowedKeys = ['enableRemaster', 'preferredQuality', 'enablePublicSources', 'embedLyricToFile']
+              const allowedKeys = ['enableServerCache', 'enableServerLyricCache', 'serverCacheLocation', 'serverCacheNamingPattern', 'downloadConcurrency', 'enableRemaster', 'preferredQuality', 'enableOnlyDownloadMode', 'enablePublicSources', 'embedLyricToFile', 'preferServerCache']
               allowedKeys.forEach(key => {
                 if (settings[key] !== undefined) restrictedSettings[key] = settings[key]
               })
@@ -2627,7 +2517,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
 
         void readBody(req).then(async body => {
           try {
-            const { location, namingPattern, saveDownloadToLibrary, saveCacheToLibrary } = JSON.parse(body)
+            const { location, namingPattern } = JSON.parse(body)
             let updated = false
 
             if (location) {
@@ -2652,22 +2542,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
               updated = true
             }
 
-            // [New] 共享音乐库开关：下载/缓存是否落入 /music（无用户子目录）
-            if (saveDownloadToLibrary !== undefined) {
-              if (global.lx.config) (global.lx.config as any)['saveDownloadToLibrary'] = !!saveDownloadToLibrary
-              updated = true
-              pendingLibraryConfigApply = true
-            }
-            if (saveCacheToLibrary !== undefined) {
-              if (global.lx.config) (global.lx.config as any)['saveCacheToLibrary'] = !!saveCacheToLibrary
-              updated = true
-              pendingLibraryConfigApply = true
-            }
-
             if (updated) {
-              if (typeof (global.lx as any).saveConfig === 'function') (global.lx as any).saveConfig()
-              // 立即生效：当前无代理缓存活跃读写时马上切换落盘位置；否则等活跃读写归零后再切（无读取时再切换）
-              maybeApplyLibraryConfigWhenIdle()
               res.writeHead(200, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify({ success: true }))
             } else {
@@ -2979,17 +2854,12 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
       if (pathname === '/api/music/cache/download' && req.method === 'POST') {
         void readBody(req).then(body => {
           try {
-            const { songInfo, url, quality, embedLyric, requestedSource, downloadSource, sourceName } = JSON.parse(body)
+            const { songInfo, url, quality, enableOnlyDownloadMode, namingPattern, cacheLyric, embedLyric, requestedSource, downloadSource, sourceName } = JSON.parse(body)
             if (!songInfo || !url) {
               res.writeHead(400)
               res.end('Missing params')
               return
             }
-
-            // 存储策略由服务端配置(global.lx.config)统一决定，不再接受前端逐请求覆盖
-            const cfg = (global.lx && (global.lx as any).config) || {}
-            const isOnlyDownload = cfg['enableOnlyDownloadMode'] === true
-            const shouldCacheLyric = cfg['enableServerLyricCache'] !== false
 
             // Fire and forget (background download) with Abort support
             const reqUsername = (req.headers['x-user-name'] as string) || ''
@@ -3005,6 +2875,16 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
               }
               username = verified
             }
+            if (namingPattern) {
+              const auth = req.headers['x-frontend-auth']
+              if (auth !== global.lx.config['frontend.password']) {
+                res.writeHead(403, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ success: false, error: 'Unauthorized to change cache naming pattern' }))
+                return
+              }
+              const normalizedNamingPattern = fileCache.setNamingPattern(namingPattern)
+              if (global.lx.config) global.lx.config['cache.namingPattern'] = normalizedNamingPattern
+            }
             const songKey = fileCache.normalizeSongId(songInfo) + '_' + (quality || 'unknown')
 
             console.log(`[Cache] Registering active task: ${songKey} for user: "${username}"`)
@@ -3017,7 +2897,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
             }
             userTasks.push({ songKey, controller })
 
-            void fileCache.downloadAndCache(songInfo, url, quality, username, controller.signal, isOnlyDownload, shouldCacheLyric, embedLyric !== false, {
+            void fileCache.downloadAndCache(songInfo, url, quality, username, controller.signal, !!enableOnlyDownloadMode, cacheLyric !== false, embedLyric !== false, {
               requestedSource: requestedSource || songInfo.source,
               downloadSource,
               sourceName,
@@ -3837,7 +3717,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
       if (pathname === '/api/music/cache/lyric' && req.method === 'POST') {
         void readBody(req).then(body => {
           try {
-            const { songInfo, lyricsObj } = JSON.parse(body)
+            const { songInfo, lyricsObj, enableOnlyDownloadMode } = JSON.parse(body)
             const reqUsername = (req.headers['x-user-name'] as string) || ''
             const isPublic = !reqUsername || reqUsername === 'default'
             let username = '_open'
@@ -3858,7 +3738,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
               return
             }
 
-            const success = fileCache.saveLyricCache(songInfo, lyricsObj, username, (global.lx.config as any)['enableOnlyDownloadMode'] === true)
+            const success = fileCache.saveLyricCache(songInfo, lyricsObj, username, !!enableOnlyDownloadMode)
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ success }))
           } catch (e: any) {
@@ -3881,57 +3761,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
           return
         }
 
-        // ── 透明磁盘缓存：命中直接服务，避免重复回源（受共享库开关统一控制）──
-        const pQuality = urlObj.searchParams.get('quality') || undefined
-        const pKey = proxyCacheKey(urlStr, filename, pQuality)
-        // 仅当“缓存/下载落入共享库”开关开启时，代理缓存才写入 fileCache 的缓存目录（cache/_library 或 music/_library）
-        const downloadMode = !isInline
-        const cacheDir = fileCache.getProxyCacheDir(downloadMode)
-        const proxyCaching = !!cacheDir
-        const pFile = proxyCaching ? path.join(cacheDir, pKey + '.bin') : ''
-        const wantsRange = !!req.headers['range'] && (req.headers['range'] as string) !== 'bytes=0-'
-        let aborted = false
-
-        // 跟踪代理缓存活跃读写：进入磁盘缓存读写路径即 +1，响应结束/中止时 -1。
-        // 用于“当前无读取时再切换缓存落盘位置”。
-        if (proxyCaching && !wantsRange) {
-          proxyCacheActiveOps++
-          let opDone = false
-          const decOp = () => {
-            if (opDone) return
-            opDone = true
-            proxyCacheActiveOps = Math.max(0, proxyCacheActiveOps - 1)
-            maybeApplyLibraryConfigWhenIdle()
-          }
-          res.once('finish', decOp)
-          res.once('close', decOp)
-        }
-
-        // 命中磁盘缓存：直接服务，不再回源
-        if (proxyCaching && !wantsRange && serveProxyCacheHit(pFile, filename, req, res)) {
-          return
-        }
-
-        // 单飞合并：未命中且缓存开启时，若已有协程在回源落盘，则等待其完成后再命中返回，
-        // 避免并发重复拉取（缓存惊群）与多个请求写同一个临时/缓存文件导致损坏。
-        // 锁以 pFile（含目录）为 key，确保切换落盘目录后新旧目录的请求不会共享同一把锁。
-        if (proxyCaching && !wantsRange) {
-          const cacheReady = fs.existsSync(pFile) && fs.statSync(pFile).size > 0
-          if (!cacheReady) {
-            const inflight = proxyCacheInflight.get(pFile)
-            if (inflight) {
-              try { await inflight } catch (_) { }
-              // 协程完成后直接命中磁盘返回；若仍缺失（协程失败）则退化为本请求自行回源
-              if (serveProxyCacheHit(pFile, filename, req, res)) return
-            }
-            // 成为协程：注册锁，待落盘完成/失败后再释放，期间其余并发请求会等待本协程
-            let resolver: () => void = () => { }
-            const lock = new Promise<void>((res) => { resolver = res })
-            proxyCacheInflight.set(pFile, lock)
-            proxyCacheResolvers.set(pFile, resolver)
-          }
-        }
-
         try {
           const isTaggingMode = urlObj.searchParams.get('tag') === '1'
           const taskId = urlObj.searchParams.get('taskId')
@@ -3945,7 +3774,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
           const doFetch = (targetUrl: string, attempt: number) => {
             if (attempt > 5) {
               console.error('[DownloadProxy] Too many redirects')
-              releaseProxyLock(pFile)
               if (!res.headersSent) {
                 res.writeHead(502)
                 res.end('Too Many Redirects')
@@ -4116,19 +3944,12 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
 
                       const tagged = fs.readFileSync(tempPath)
                       headers['Content-Length'] = tagged.length.toString()
-                      if (proxyCaching && !wantsRange) {
-                        try { fs.writeFileSync(pFile, tagged); releaseProxyLock(pFile) } catch (_) { releaseProxyLock(pFile) }
-                      }
                       if (!res.headersSent) {
                         res.writeHead(200, headers)
                         res.end(tagged)
                       }
                       finishProgress()
                     } catch (e: any) {
-                      if (proxyCaching && !wantsRange) {
-                        try { const raw = Buffer.concat(chunks); fs.writeFileSync(pFile, raw) } catch (_) { }
-                        releaseProxyLock(pFile)
-                      }
                       if (!res.headersSent) {
                         res.writeHead(200, headers)
                         res.end(Buffer.concat(chunks))
@@ -4144,36 +3965,12 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
 
                 if (!res.headersSent) {
                   res.writeHead(proxyRes.statusCode || 200, headers)
+                  proxyRes.pipe(res)
                 }
-                // 透明缓存：开关开启且非 Range 请求时，同时落盘到 fileCache 缓存目录，后续命中直接服务
-                if (proxyCaching && !wantsRange) {
-                  const tmpFile = pFile + '.tmp'
-                  const cacheWS = fs.createWriteStream(tmpFile)
-                  proxyRes.pipe(cacheWS)
-                  cacheWS.on('finish', () => {
-                    try {
-                      const tmpSize = fs.statSync(tmpFile).size
-                      const expected = parseInt((proxyRes.headers['content-length'] as string) || '0', 10)
-                      const complete = tmpSize > 0 && (expected === 0 || tmpSize === expected)
-                      if (!complete || req.aborted) {
-                        fs.unlinkSync(tmpFile)
-                        releaseProxyLock(pFile)
-                        return
-                      }
-                      fs.renameSync(tmpFile, pFile)
-                      try { fs.writeFileSync(pFile + '.ct', contentType) } catch (_) { }
-                      console.log(`[ProxyCache] Cached ${pKey} (${(tmpSize / 1048576).toFixed(1)} MB) -> ${pFile}`)
-                      releaseProxyLock(pFile)
-                    } catch (_) { try { fs.unlinkSync(tmpFile) } catch (_) { } releaseProxyLock(pFile) }
-                  })
-                  cacheWS.on('error', () => { try { fs.unlinkSync(tmpFile) } catch (_) { } releaseProxyLock(pFile) })
-                }
-                proxyRes.pipe(res)
               })
 
               proxyReq.on('error', (err: any) => {
                 console.error('[DownloadProxy] Request Error:', err)
-                releaseProxyLock(pFile)
                 if (!res.headersSent) {
                   res.writeHead(502)
                   res.end('Request Error')
@@ -4182,7 +3979,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
 
               // 如果客户端（浏览器）中止了请求（例如：用户拖拽进度条、切换歌曲等），应该立刻销毁上游的下载请求，防止持续占用服务器下行带宽
               req.on('close', () => {
-                if (req.aborted && proxyCaching) { try { fs.unlinkSync(pFile + '.tmp') } catch (_) { } releaseProxyLock(pFile) }
                 if (!proxyReq.destroyed) {
                   proxyReq.destroy()
                 }
@@ -4192,7 +3988,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
 
             } catch (err: any) {
               console.error('[DownloadProxy] Try Error:', err)
-              releaseProxyLock(pFile)
               if (!res.headersSent) {
                 res.writeHead(500)
                 res.end('Internal Server Error')
@@ -4205,7 +4000,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
 
         } catch (err: any) {
           console.error('[DownloadProxy] Error:', err)
-          releaseProxyLock(pFile)
           res.writeHead(500)
           res.end('Server Error')
         }
@@ -4432,11 +4226,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
           'user.enablePublicRestriction': global.lx.config['user.enablePublicRestriction'] || false,
           'user.enablePublicFavorites': global.lx.config['user.enablePublicFavorites'] || false,
           'user.enablePublicNonAdminAccess': global.lx.config['user.enablePublicNonAdminAccess'] || false,
-          'user.enablePublicNonAdminLocalMusic': global.lx.config['user.enablePublicNonAdminLocalMusic'] || false,
-          'saveDownloadToLibrary': (global.lx.config as any)['saveDownloadToLibrary'] ?? true,
-          'saveCacheToLibrary': (global.lx.config as any)['saveCacheToLibrary'] ?? true,
-          'enableOnlyDownloadMode': (global.lx.config as any)['enableOnlyDownloadMode'] === true,
-          'enableServerLyricCache': (global.lx.config as any)['enableServerLyricCache'] !== false
+          'user.enablePublicNonAdminLocalMusic': global.lx.config['user.enablePublicNonAdminLocalMusic'] || false
         }))
         return
       }
@@ -5418,7 +5208,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
             'subsonic.onlineSearchMode': global.lx.config['subsonic.onlineSearchMode'] ?? 'fallback',
             'subsonic.onlineSearchSources': global.lx.config['subsonic.onlineSearchSources'] ?? 'wy,tx,kw,kg,mg',
             'subsonic.lyricTranslation': global.lx.config['subsonic.lyricTranslation'] ?? true,
-            'subsonic.autoCacheOnPlay': global.lx.config['subsonic.autoCacheOnPlay'] ?? true,
             'singer.sourcePriority': (global.lx.config['singer.sourcePriority'] || ['tx', 'wy']).join(','),
             'artist.maxFetchPages': global.lx.config['artist.maxFetchPages'] ?? 20,
             'system.allowUnsafeVM': global.lx.config['system.allowUnsafeVM'] || false,
@@ -5527,7 +5316,6 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
               if (newConfig['subsonic.onlineSearchMode'] !== undefined) global.lx.config['subsonic.onlineSearchMode'] = newConfig['subsonic.onlineSearchMode']
               if (newConfig['subsonic.onlineSearchSources'] !== undefined) global.lx.config['subsonic.onlineSearchSources'] = newConfig['subsonic.onlineSearchSources']
               if (newConfig['subsonic.lyricTranslation'] !== undefined) global.lx.config['subsonic.lyricTranslation'] = newConfig['subsonic.lyricTranslation']
-              if (newConfig['subsonic.autoCacheOnPlay'] !== undefined) global.lx.config['subsonic.autoCacheOnPlay'] = newConfig['subsonic.autoCacheOnPlay']
               if (newConfig['singer.sourcePriority'] !== undefined) {
                 const priority = String(newConfig['singer.sourcePriority']).split(',').filter(s => s === 'tx' || s === 'wy') as Array<'tx' | 'wy'>
                 if (priority.length > 0) global.lx.config['singer.sourcePriority'] = priority
@@ -5594,12 +5382,9 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
                 'subsonic.onlineSearchMode': global.lx.config['subsonic.onlineSearchMode'],
                 'subsonic.onlineSearchSources': global.lx.config['subsonic.onlineSearchSources'],
                 'subsonic.lyricTranslation': global.lx.config['subsonic.lyricTranslation'],
-                'subsonic.autoCacheOnPlay': global.lx.config['subsonic.autoCacheOnPlay'],
                 'singer.sourcePriority': global.lx.config['singer.sourcePriority'],
                 'artist.maxFetchPages': global.lx.config['artist.maxFetchPages'],
                 'cache.namingPattern': global.lx.config['cache.namingPattern'],
-                'saveDownloadToLibrary': (global.lx.config as any)['saveDownloadToLibrary'] ?? true,
-                'saveCacheToLibrary': (global.lx.config as any)['saveCacheToLibrary'] ?? true,
                 'system.allowUnsafeVM': global.lx.config['system.allowUnsafeVM'],
                 users: global.lx.config.users.map(u => ({
                   name: u.name,
@@ -6533,11 +6318,6 @@ export const startServer = async (port: number, ip: string) => {
     }
   }
 
-  // 固化共享音乐库开关的"生效值"（严格版：运行期拨动开关仅写配置，需重启才生效）
-  fileCache.applyEffectiveLibraryConfig()
-  // 启动校验 job：去重 / 提升个人文件到共享库（单向，不阻塞启动）
-  void fileCache.runStartupMigration()
-
   // [新增] 注入歌词获取钩子：用于服务器缓存时自动嵌入 USLT 标签
   // SDK 的 getLyric() 返回 { promise, cancel }，必须 await .promise
   fileCache.setLyricFetcher(async (songInfo: any) => {
@@ -6578,12 +6358,8 @@ export const startServer = async (port: number, ip: string) => {
   startupLog.info(`starting sync server in ${process.env.NODE_ENV == 'production' ? 'production' : 'development'}`)
   const proxyEnabled = global.lx.config['proxy.all.enabled']
   const proxyAddress = global.lx.config['proxy.all.address']
-  const envProxy = process.env.HTTPS_PROXY || process.env.https_proxy
-  console.log(`[Proxy] Music SDK Proxy: ${proxyEnabled ? `Enabled (${proxyAddress || '未配置地址'})` : 'Disabled'}`)
-  startupLog.info(`Music SDK Proxy: ${proxyEnabled ? `Enabled (${proxyAddress || '未配置地址'})` : 'Disabled'}`)
-  if (proxyEnabled && !proxyAddress && !envProxy) {
-    console.warn('[Proxy] ⚠️ 已启用代理但 proxy.all.address 为空，且未设置 HTTPS_PROXY 环境变量。搜索 / star / 封面 / 播放取链将不走代理（极可能失败）。请在 config.js 配置 proxy.all.address、设置 HTTPS_PROXY，或关闭 proxy.all.enabled。')
-  }
+  console.log(`[Proxy] Music SDK Proxy: ${proxyEnabled ? `Enabled (${proxyAddress})` : 'Disabled'}`)
+  startupLog.info(`Music SDK Proxy: ${proxyEnabled ? `Enabled (${proxyAddress})` : 'Disabled'}`)
   try {
     await musicSdk.init()
     startupLog.info('musicSdk initialized')
@@ -6601,32 +6377,24 @@ export const startServer = async (port: number, ip: string) => {
     console.error('[Server] Failed to initialize user APIs:', err.message)
   }
 
-  // [Fix] 服务启动时从服务端配置(global.lx.config)初始化 fileCache 存储策略。
-  // 旧版曾把位置/命名规则持久化在 _open 用户 settings.json，这里做兼容迁移。
-  // 缓存/入库/歌词开关统一由服务端配置决定，前端不再参与。
+  // [Fix] 服务启动时从 _open 用户 settings.json 读取 serverCacheLocation 并预初始化 fileCache，
+  // 避免前端初始化同步时因服务端内存状态（默认 'root'）与持久化设置不一致而触发权限检查返回 403
   try {
-    const cfg = (global.lx && (global.lx as any).config) || {}
-    let location = cfg['cache.location'] || null
-    let namingPattern = cfg['cache.namingPattern'] || null
-    // 兼容迁移：旧 _open settings.json 中的值
     const openUserSpace = getUserSpace('_open')
     const settingsPath = path.join(openUserSpace.dataManage.userDir, File.userSettingsJSON)
     if (fs.existsSync(settingsPath)) {
       const savedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
-      if (!location && savedSettings.serverCacheLocation) location = savedSettings.serverCacheLocation
-      if (!namingPattern && savedSettings.serverCacheNamingPattern) namingPattern = savedSettings.serverCacheNamingPattern
+      if (savedSettings.serverCacheLocation) {
+        fileCache.setCacheLocation(savedSettings.serverCacheLocation)
+        console.log(`[Server] Restored fileCache location from settings: ${savedSettings.serverCacheLocation}`)
+      }
+      if (savedSettings.serverCacheNamingPattern) {
+        const normalizedNamingPattern = fileCache.setNamingPattern(savedSettings.serverCacheNamingPattern)
+        console.log(`[Server] Restored cache naming pattern from settings: ${normalizedNamingPattern}`)
+      }
     }
-    if (location) {
-      fileCache.setCacheLocation(location)
-      console.log(`[Server] fileCache location initialized: ${location}`)
-    }
-    if (namingPattern) {
-      const normalizedNamingPattern = fileCache.setNamingPattern(namingPattern)
-      console.log(`[Server] cache naming pattern initialized: ${normalizedNamingPattern}`)
-    }
-    fileCache.applyEffectiveLibraryConfig()
   } catch (err: any) {
-    console.warn('[Server] Failed to initialize fileCache storage policy:', err.message)
+    console.warn('[Server] Failed to restore fileCache location:', err.message)
   }
 
   serverDownloadQueue.initialize(async task => {

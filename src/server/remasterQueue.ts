@@ -109,191 +109,127 @@ const waitForRetry = (attempt: number, signal: AbortSignal) => new Promise<void>
   signal.addEventListener('abort', onAbort, { once: true })
 })
 
-// 判断是否为「现场版」（优先级更低，不算作已满足目标音质）
-const isLiveVersion = (item: fileCache.CacheItem): boolean => {
-  const name = item.name || ''
-  const version = (item as any).version || (item as any).subtitle || ''
-  return /(现场|現場)/.test(name) || /[Ll]ive/.test(name) || /演唱会/.test(name) || /[Cc]oncert/.test(name) ||
-    /(现场|現場)/.test(version) || /[Ll]ive/.test(version)
-}
-
-const normalizeText = (s?: string) => String(s || '').trim().toLowerCase()
-// 在同一首歌（名称+歌手）的非现场版本中，找出最合适的「录音室版」兄弟
-const findStudioSibling = (item: fileCache.CacheItem, allItems: fileCache.CacheItem[]): fileCache.CacheItem | null => {
-  const n = normalizeText(item.name)
-  const s = normalizeText(item.singer)
-  if (!n || !s) return null
-  let fallback: fileCache.CacheItem | null = null
-  for (const other of allItems) {
-    if (other === item || other.id === item.id) continue
-    if (normalizeText(other.name) !== n || normalizeText(other.singer) !== s) continue
-    if (isLiveVersion(other)) continue
-    if (other.source === item.source) return other
-    if (!fallback) fallback = other
-  }
-  return fallback
-}
-
 const runTask = async (task: RemasterTask, items: fileCache.CacheItem[], allItems: fileCache.CacheItem[]) => {
   if (!resolver) throw new Error('洗版解析器尚未初始化')
   const availableQualities = new Set(allItems.map(item => `${item.id}\0${item.quality}`))
 
-  for (const item of items) {
+  itemLoop: for (const item of items) {
     if (task.controller.signal.aborted) break
-    const action = await remasterOneItem(task, item, allItems, availableQualities)
-    if (action === 'abort') break
+    const baseResult = {
+      filename: item.filename,
+      name: item.name,
+      singer: item.singer,
+      originalQuality: item.quality || 'unknown',
+      targetQuality: task.targetQuality,
+    }
+    const songInfo = buildSongInfo(item)
+    if (!songInfo) {
+      addResult(task, {
+        ...baseResult,
+        status: 'skipped',
+        message: '缺少可用的歌曲来源或歌曲 ID，请先在本地音乐中关联歌曲',
+      })
+      continue
+    }
+
+    const currentRank = qualityRank(item.quality)
+    const targetRank = qualityRank(task.targetQuality)
+    if (currentRank === targetRank) {
+      addResult(task, { ...baseResult, actualQuality: item.quality, status: 'skipped', message: '当前已经是目标音质' })
+      continue
+    }
+    if (availableQualities.has(`${item.id}\0${task.targetQuality}`)) {
+      addResult(task, {
+        ...baseResult,
+        actualQuality: task.targetQuality,
+        status: 'skipped',
+        message: '同一歌曲的目标音质文件已存在，已跳过以避免覆盖',
+      })
+      continue
+    }
+
+    let lastError: any = null
+    let lastActualQuality = ''
+    let attemptsMade = 0
+    for (let attempt = 1; attempt <= MAX_REMASTER_ATTEMPTS; attempt++) {
+      attemptsMade = attempt
+      try {
+        const resolved = await resolver(songInfo, task.targetQuality, task.username)
+        if (task.controller.signal.aborted) break itemLoop
+        const actualQuality = resolved.quality || task.targetQuality
+        lastActualQuality = actualQuality
+        const actualRank = qualityRank(actualQuality)
+        if (actualRank < 0) throw new Error(`无法识别解析到的音质: ${actualQuality}`)
+
+        if (currentRank >= 0 && targetRank > currentRank && actualRank <= currentRank) {
+          addResult(task, {
+            ...baseResult,
+            actualQuality,
+            status: 'skipped',
+            message: '目标音质不可用，且未获得高于当前文件的音质',
+          })
+          continue itemLoop
+        }
+        if (currentRank >= 0 && targetRank < currentRank && actualRank >= currentRank) {
+          addResult(task, {
+            ...baseResult,
+            actualQuality,
+            status: 'skipped',
+            message: '未获得低于当前文件的目标音质',
+          })
+          continue itemLoop
+        }
+        if (availableQualities.has(`${item.id}\0${actualQuality}`)) {
+          addResult(task, {
+            ...baseResult,
+            actualQuality,
+            status: 'skipped',
+            message: '同一歌曲的实际可用音质文件已存在，已跳过以避免覆盖',
+          })
+          continue itemLoop
+        }
+
+        await fileCache.replaceDownloadedMusicItem(
+          task.username,
+          item,
+          songInfo,
+          resolved.url,
+          actualQuality,
+          task.controller.signal,
+        )
+        availableQualities.delete(`${item.id}\0${item.quality}`)
+        availableQualities.add(`${item.id}\0${actualQuality}`)
+        const didFallback = actualQuality !== task.targetQuality
+        addResult(task, {
+          ...baseResult,
+          actualQuality,
+          status: didFallback ? 'downgraded' : 'replaced',
+          message: didFallback ? '目标音质不可用，已使用可获得的较低音质' : '替换成功',
+        })
+        continue itemLoop
+      } catch (err: any) {
+        if (task.controller.signal.aborted || err?.message === 'Aborted') break itemLoop
+        lastError = err
+        if (attempt < MAX_REMASTER_ATTEMPTS && isRetryableError(err)) {
+          await waitForRetry(attempt, task.controller.signal)
+          continue
+        }
+        break
+      }
+    }
+
+    addResult(task, {
+      ...baseResult,
+      ...(lastActualQuality ? { actualQuality: lastActualQuality } : {}),
+      status: 'failed',
+      message: attemptsMade > 1
+        ? `尝试 ${attemptsMade} 次后失败：${lastError?.message || '洗版失败，原文件已保留'}`
+        : (lastError?.message || '洗版失败，原文件已保留'),
+    })
   }
 
   task.status = task.controller.signal.aborted ? 'cancelled' : 'completed'
   task.updatedAt = Date.now()
-}
-
-// 处理单曲洗版；返回 'next' 继续下一首，'abort' 表示任务被中止
-const remasterOneItem = async (
-  task: RemasterTask,
-  item: fileCache.CacheItem,
-  allItems: fileCache.CacheItem[],
-  availableQualities: Set<string>,
-): Promise<'next' | 'abort'> => {
-  const baseResult = {
-    filename: item.filename,
-    name: item.name,
-    singer: item.singer,
-    originalQuality: item.quality || 'unknown',
-    targetQuality: task.targetQuality,
-  }
-  const songInfo = buildSongInfo(item)
-  if (!songInfo) {
-    addResult(task, {
-      ...baseResult,
-      status: 'skipped',
-      message: '缺少可用的歌曲来源或歌曲 ID，请先在本地音乐中关联歌曲',
-    })
-    return 'next'
-  }
-
-  // ── 现场版优先级更低：现场版即使已达目标音质，也不视为「已满足」，
-  //    由更优的录音室版覆盖；确保录音室版达到目标音质后，移除重复的现场版 ──
-  if (isLiveVersion(item)) {
-    const studio = findStudioSibling(item, allItems)
-    if (studio) {
-      const studioRank = qualityRank(studio.quality)
-      const studioTargetExists = availableQualities.has(`${studio.id}\0${task.targetQuality}`)
-      if (studioRank !== qualityRank(task.targetQuality) && !studioTargetExists) {
-        const studioAction = await remasterOneItem(task, studio, allItems, availableQualities)
-        if (studioAction === 'abort') return 'abort'
-      }
-      try {
-        await fileCache.deleteDownloadedMusicItem(task.username, item)
-      } catch (e) {
-        console.warn('[Remaster] 移除重复的现场版失败:', e)
-      }
-      availableQualities.delete(`${item.id}\0${item.quality}`)
-      addResult(task, {
-        ...baseResult,
-        status: 'replaced',
-        message: '现场版已由录音室版（目标音质）覆盖，已移除重复现场版',
-      })
-      return 'next'
-    }
-    // 无录音室版兄弟 → 现场版即唯一版本，按正常流程洗版
-  }
-
-  const currentRank = qualityRank(item.quality)
-  const targetRank = qualityRank(task.targetQuality)
-  if (currentRank === targetRank) {
-    addResult(task, { ...baseResult, actualQuality: item.quality, status: 'skipped', message: '当前已经是目标音质' })
-    return 'next'
-  }
-  if (availableQualities.has(`${item.id}\0${task.targetQuality}`)) {
-    addResult(task, {
-      ...baseResult,
-      actualQuality: task.targetQuality,
-      status: 'skipped',
-      message: '同一歌曲的目标音质文件已存在，已跳过以避免覆盖',
-    })
-    return 'next'
-  }
-
-  let lastError: any = null
-  let lastActualQuality = ''
-  let attemptsMade = 0
-  for (let attempt = 1; attempt <= MAX_REMASTER_ATTEMPTS; attempt++) {
-    attemptsMade = attempt
-    try {
-      const resolved = await resolver(songInfo, task.targetQuality, task.username)
-      if (task.controller.signal.aborted) return 'abort'
-      const actualQuality = resolved.quality || task.targetQuality
-      lastActualQuality = actualQuality
-      const actualRank = qualityRank(actualQuality)
-      if (actualRank < 0) throw new Error(`无法识别解析到的音质: ${actualQuality}`)
-
-      if (currentRank >= 0 && targetRank > currentRank && actualRank <= currentRank) {
-        addResult(task, {
-          ...baseResult,
-          actualQuality,
-          status: 'skipped',
-          message: '目标音质不可用，且未获得高于当前文件的音质',
-        })
-        return 'next'
-      }
-      if (currentRank >= 0 && targetRank < currentRank && actualRank >= currentRank) {
-        addResult(task, {
-          ...baseResult,
-          actualQuality,
-          status: 'skipped',
-          message: '未获得低于当前文件的目标音质',
-        })
-        return 'next'
-      }
-      if (availableQualities.has(`${item.id}\0${actualQuality}`)) {
-        addResult(task, {
-          ...baseResult,
-          actualQuality,
-          status: 'skipped',
-          message: '同一歌曲的实际可用音质文件已存在，已跳过以避免覆盖',
-        })
-        return 'next'
-      }
-
-      await fileCache.replaceDownloadedMusicItem(
-        task.username,
-        item,
-        songInfo,
-        resolved.url,
-        actualQuality,
-        task.controller.signal,
-      )
-      availableQualities.delete(`${item.id}\0${item.quality}`)
-      availableQualities.add(`${item.id}\0${actualQuality}`)
-      const didFallback = actualQuality !== task.targetQuality
-      addResult(task, {
-        ...baseResult,
-        actualQuality,
-        status: didFallback ? 'downgraded' : 'replaced',
-        message: didFallback ? '目标音质不可用，已使用可获得的较低音质' : '替换成功',
-      })
-      return 'next'
-    } catch (err: any) {
-      if (task.controller.signal.aborted || err?.message === 'Aborted') return 'abort'
-      lastError = err
-      if (attempt < MAX_REMASTER_ATTEMPTS && isRetryableError(err)) {
-        await waitForRetry(attempt, task.controller.signal)
-        continue
-      }
-      break
-    }
-  }
-
-  addResult(task, {
-    ...baseResult,
-    ...(lastActualQuality ? { actualQuality: lastActualQuality } : {}),
-    status: 'failed',
-    message: attemptsMade > 1
-      ? `尝试 ${attemptsMade} 次后失败：${lastError?.message || '洗版失败，原文件已保留'}`
-      : (lastError?.message || '洗版失败，原文件已保留'),
-  })
-  return 'next'
 }
 
 export const start = async (username: string, targetQuality: string, filenames: unknown) => {

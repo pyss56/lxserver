@@ -823,37 +823,6 @@ aside {
     border-color: var(--c-600);
 }
 
-/* ── 顶部来源分段标签 (全部 / 缓存 / 下载 / 音乐库) ── */
-.lm-view-tab {
-    font-weight: 600;
-    color: var(--text-muted);
-    cursor: pointer;
-    white-space: nowrap;
-    border: 1.5px solid transparent;
-}
-.lm-view-tab:hover {
-    color: var(--c-500);
-}
-.lm-view-tab.active {
-    background-color: var(--c-500);
-    color: #fff;
-    border-color: var(--c-500);
-    box-shadow: 0 1px 4px color-mix(in srgb, var(--c-500) 40%, transparent);
-}
-/* 音乐库 作为共享来源，使用紫色强调以更显眼 */
-.lm-view-tab-library {
-    color: #a855f7;
-}
-.lm-view-tab-library:hover {
-    color: #9333ea;
-}
-.lm-view-tab-library.active {
-    background-color: #a855f7;
-    border-color: #a855f7;
-    color: #fff;
-    box-shadow: 0 1px 4px color-mix(in srgb, #a855f7 40%, transparent);
-}
-
 /* ── 统一风格的单选 select 特有样式 ── */
 .lm-select {
     appearance: none;

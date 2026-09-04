@@ -1809,9 +1809,6 @@ class App {
             if (form.elements['subsonic.lyricTranslation']) {
                 form.elements['subsonic.lyricTranslation'].checked = config['subsonic.lyricTranslation'] !== false;
             }
-            if (form.elements['subsonic.autoCacheOnPlay']) {
-                form.elements['subsonic.autoCacheOnPlay'].checked = config['subsonic.autoCacheOnPlay'] !== false;
-            }
         } catch (err) {
             console.error('Failed to load config:', err);
         }
@@ -1899,7 +1896,6 @@ class App {
             'subsonic.onlineSearchMode': formData.get('subsonic.onlineSearchMode') || 'fallback',
             'subsonic.onlineSearchSources': (formData.get('subsonic.onlineSearchSources') || '').trim() || 'wy,tx,kw,kg,mg',
             'subsonic.lyricTranslation': formData.get('subsonic.lyricTranslation') === 'on',
-            'subsonic.autoCacheOnPlay': formData.get('subsonic.autoCacheOnPlay') === 'on',
             'singer.sourcePriority': formData.get('singer.sourcePriority'),
             'system.allowUnsafeVM': formData.get('system.allowUnsafeVM') === 'on',
         };

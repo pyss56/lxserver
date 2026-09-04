@@ -48,20 +48,12 @@ const createLogConfig = (logPath: string) => {
         keepFileExt: true,
         numBackups: 10,
       },
-      customSource: {
-        type: 'file',
-        filename: path.join(logPath, 'customSource.log'),
-        maxLogSize: 1024 * 1024 * 10,
-        keepFileExt: true,
-        numBackups: 10,
-      },
     },
     categories: {
       default: { appenders: ['app', 'errors', 'console'], level: 'DEBUG' },
       access: { appenders: ['access'], level: 'ALL' },
       login: { appenders: ['login'], level: 'ALL' },
       token: { appenders: ['token'], level: 'ALL' },
-      customSource: { appenders: ['customSource', 'console'], level: 'WARN' },
     },
   }
 }
@@ -77,4 +69,3 @@ export const syncLog = log4js.getLogger('sync')
 export const accessLog = log4js.getLogger('access')
 export const loginLog = log4js.getLogger('login')
 export const tokenLog = log4js.getLogger('token')
-export const customSourceLog = log4js.getLogger('customSource')

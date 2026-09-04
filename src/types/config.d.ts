@@ -231,11 +231,6 @@ declare namespace LX {
     'subsonic.lyricTranslation'?: boolean
 
     /**
-     * 播放时是否同步把歌曲下载到服务器缓存 (默认 true，设为 false 关闭"边播边存")
-     */
-    'subsonic.autoCacheOnPlay'?: boolean
-
-    /**
      * 歌手信息源优先级
      */
     'singer.sourcePriority': Array<'tx' | 'wy'>
@@ -251,26 +246,6 @@ declare namespace LX {
      * 缓存存储位置
      */
     serverCacheLocation?: string
-    /**
-     * 流缓存是否落入共享音乐库 (/music)
-     */
-    'saveCacheToLibrary'?: boolean
-    /**
-     * 下载是否落入共享音乐库 (/music)
-     */
-    'saveDownloadToLibrary'?: boolean
-    /**
-     * 是否开启「仅下载模式」(下载到库，不写独立缓存目录)
-     */
-    'enableOnlyDownloadMode'?: boolean
-    /**
-     * 是否缓存歌词到服务端
-     */
-    'enableServerLyricCache'?: boolean
-    /**
-     * 缓存基础存储位置 root | data | library
-     */
-    'cache.location'?: string
     /**
      * 是否允许运行 VM 模式自定义源脚本
      */

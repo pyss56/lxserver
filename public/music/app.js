@@ -93,8 +93,7 @@ const DEFAULT_SETTINGS = {
     enableAutoSwitchApiSource: true, // 自动解析换源 (默认开启)
     enableAutoSkipOnError: true, // 失败自动下一曲 (默认开启)
     enableAutoDegradeQuality: true, // 自动降低音质 (默认开启)
-    enableAutoRetryOnLinkFail: true, // 失败自动重解析链接 (默认开启，应对链接过期/失效)
-    playbackErrorPriority: 'retry,platform,quality,next', // 播放失败处理优先级（retry=同音源重新解析，应对链接过期/失效）
+    playbackErrorPriority: 'platform,quality,next', // 播放失败处理优先级
     enablePreloader: true, // 预读机制 (默认开启)
     enableSmtcLyric: true, // SMTC 歌词显示 (默认开启)
     // Visualizer Settings (Refactored)
@@ -111,8 +110,6 @@ const DEFAULT_SETTINGS = {
     serverCacheLocation: 'root', // 缓存位置: 'data' (synced) or 'root' (local)
     serverCacheNamingPattern: 'simple', // 缓存命名规则: standard | simple
     enableRemaster: false, // 启用下载目录歌曲洗版
-    saveDownloadToLibrary: true, // 下载落入共享音乐库 /music（无用户子目录，未配置默认开启）
-    saveCacheToLibrary: true, // 本地播放缓存落入共享音乐库 /music（无用户子目录，未配置默认开启）
     enableLyricCache: true,
     enableSongUrlCache: true,
     enableLyricGlow: true, // 歌词荧光效果 (默认开启)
@@ -291,7 +288,13 @@ window.checkNetworkListUpdates = checkNetworkListUpdates;
 
 
 
-
+// Initial Sync for Server Cache Config
+setTimeout(() => {
+    if (settings.serverCacheLocation && window.updateServerCacheConfig) {
+        console.log('[ServerCache] Syncing config:', settings.serverCacheLocation, settings.serverCacheNamingPattern);
+        window.updateServerCacheConfig(settings.serverCacheLocation, settings.serverCacheNamingPattern);
+    }
+}, 2000);
 
 window.batchMode = false;
 window.selectedItems = new Set();
@@ -612,11 +615,6 @@ window.handleHeaderLogout = handleHeaderLogout;
         const response = await fetch('/api/music/config');
         const config = await response.json();
         window.lx_config = config; // 获取公共配置供权限模块使用
-        // [New] 同步服务端存储策略到本地设置，供前端缓存命中等逻辑使用（这些已是服务端统一配置，前端不可编辑）
-        if (typeof config['saveDownloadToLibrary'] === 'boolean') window.settings.saveDownloadToLibrary = config['saveDownloadToLibrary'];
-        if (typeof config['saveCacheToLibrary'] === 'boolean') window.settings.saveCacheToLibrary = config['saveCacheToLibrary'];
-        if (typeof config['enableOnlyDownloadMode'] === 'boolean') window.settings.enableOnlyDownloadMode = config['enableOnlyDownloadMode'];
-        if (typeof config['enableServerLyricCache'] === 'boolean') window.settings.enableServerLyricCache = config['enableServerLyricCache'];
         authEnabled = config['player.enableAuth'] === true;
 
         // 若开启认证，显示登出按钮
@@ -4145,7 +4143,76 @@ async function triggerServerCache(song, url, quality) {
     } catch (e) { console.error('[ServerCache] Trigger failed:', e); }
 }
 
+let lastNamingPattern = window.settings?.serverCacheNamingPattern || 'simple';
 
+async function updateServerCacheConfig(location, pattern) {
+    const loc = location || window.settings?.serverCacheLocation || 'root';
+    const pat = pattern || window.settings?.serverCacheNamingPattern || 'simple';
+    const oldPattern = lastNamingPattern;
+
+    const headers = { 'Content-Type': 'application/json' };
+    // 携带 Token（或兼容旧密码），让服务端正确识别身份
+    Object.assign(headers, getUserAuthHeaders());
+    const adminPass = localStorage.getItem('lx_admin_password');
+    if (adminPass) headers['x-frontend-auth'] = adminPass;
+
+    try {
+        const response = await fetch('/api/music/cache/config', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({
+                location: loc,
+                namingPattern: pat
+            })
+        });
+        if (!response.ok) {
+            console.warn('[ServerCache] Config update failed:', response.status);
+            // 失败时回滚 UI
+            if (typeof syncSettingsUI === 'function') {
+                if (location) syncSettingsUI('serverCacheLocation', settings.serverCacheLocation);
+                if (pattern) syncSettingsUI('serverCacheNamingPattern', settings.serverCacheNamingPattern);
+            }
+        } else {
+            console.log('[Cache] 服务器配置已同步:', loc, pat);
+
+            // 如果命名模式真的发生了变化（且不是初始化同步）
+            if (pattern && oldPattern && pattern !== oldPattern) {
+                const confirmed = await showSelect('歌曲命名格式变更', `检测到命名方式已更改为 "${pat}"。是否将服务器上已下载的本地歌曲重新命名为新的格式？<br><br><span class="text-xs opacity-70">注：这会同时移动对应的歌词文件，确保播放器能正常识别。</span>`, {
+                    confirmText: '现在重命名',
+                    cancelText: '保持现状',
+                    confirmColor: 'bg-emerald-500'
+                });
+
+                if (confirmed) {
+                    showLoading('正在重命名服务器文件...');
+                    try {
+                        const renameRes = await fetch('/api/music/cache/rename', {
+                            method: 'POST',
+                            headers: headers
+                        });
+                        const renameData = await renameRes.json();
+                        hideLoading();
+                        if (renameData.success) {
+                            showToast(`重命名完成！成功: ${renameData.successCount}, 跳过: ${renameData.skipCount}, 失败: ${renameData.failCount}`, 'success');
+                            // 刷新可能的列表显示
+                            if (typeof refreshCacheList === 'function') refreshCacheList();
+                        } else {
+                            showToast('重命名操作失败: ' + (renameData.message || '未知错误'), 'error');
+                        }
+                    } catch (e) {
+                        hideLoading();
+                        showToast('重命名请求异常', 'error');
+                        console.error(e);
+                    }
+                }
+            }
+            lastNamingPattern = pat; // 更新最后同步的模式
+        }
+    } catch (e) {
+        console.error('[ServerCache] Config update failed:', e);
+    }
+}
+window.updateServerCacheConfig = updateServerCacheConfig; // Expose global
 
 /**
  * playFromView handles user click on a song in the search/list view.
@@ -4214,12 +4281,6 @@ async function runRecoveryFlow(error) {
             currentRecoveryState.currentStepIndex++;
             await runRecoveryFlow(error);
         }
-    } else if (currentStep === 'retry') {
-        // 同音源/同音质重新解析：针对"链接过期/失效"而非"音源挂了"
-        showInfo(`链接可能已失效，正在重新解析: ${currentRecoveryState.currentSong.name}...`);
-        // 仅尝试一次同音源刷新，失败则升级到换源/降级/跳歌，避免死循环
-        currentRecoveryState.currentStepIndex++;
-        playSong(currentRecoveryState.currentSong, currentRecoveryState.currentIndex, currentRecoveryState.currentQuality, false, true);
     } else if (currentStep === 'skip_next') {
         const isPlatformNotSupported = error && error.message && (
             error.message.includes('未找到支持') ||
@@ -4261,8 +4322,6 @@ async function playSong(song, index, forceQuality = null, noPlay = false, isRetr
                 steps.push('switch_platform');
             } else if (key === 'next' && settings.enableAutoSkipOnError !== false) {
                 steps.push('skip_next');
-            } else if (key === 'retry' && settings.enableAutoRetryOnLinkFail !== false) {
-                steps.push('retry');
             }
         }
 
@@ -4443,32 +4502,18 @@ async function playSong(song, index, forceQuality = null, noPlay = false, isRetr
 
         // [Removed] 这里的代理逻辑已统一移动至 fetchSongUrl 阶段处理，确保预加载地址一致性
 
-        // 播放中途链接失效/过期兜底：普通在线源此前没有挂监听，会静默停掉；现在统一在此处理
-        const onPlaybackError = () => {
-            console.warn(`[Player] 播放链接失效/过期: ${playbackSong?.name} (source=${currentSourceType})`);
-            if (currentSourceType === 'cache') {
-                try { localStorage.removeItem(`lx_url_${cleanSongData(playbackSong).id}_${currentQuality || targetQuality}`); } catch (e) {}
-            }
-            if (currentSourceType === 'normal') {
-                // 普通在线源：交给恢复流程（默认先同音源刷新，再换源/降级/跳歌）
-                if (!currentRecoveryState || currentRecoveryState.thisRequestId !== thisRequestId) {
-                    currentRecoveryState = {
-                        originalSong: playbackSong, currentIndex: index, currentSong: playbackSong,
-                        originalQuality: targetQuality, currentQuality: targetQuality,
-                        triedQualities: [targetQuality], triedPlatforms: [playbackSong.source],
-                        steps: (settings.enableAutoRetryOnLinkFail !== false ? ['retry', 'platform', 'quality', 'next'] : ['platform', 'quality', 'next']), currentStepIndex: 0, thisRequestId,
-                    };
-                }
-                runRecoveryFlow(new Error('播放链接失效或过期'));
-                return;
-            }
-            // cache / server_cache：沿用原逻辑重新在线解析
-            playSong(playbackSong, index, targetQuality, noPlay, currentSourceType === 'server_cache' ? 'local_retry' : true);
-        };
-        audio.addEventListener('error', onPlaybackError, { once: true });
-        const cleanupErr = () => audio.removeEventListener('error', onPlaybackError);
-        audio.addEventListener('playing', cleanupErr, { once: true });
-        audio.addEventListener('pause', cleanupErr, { once: true });
+        // Pre-handle error for invalid cache links
+        if (currentSourceType !== 'normal') {
+            const retryHandler = () => {
+                console.warn(`[Player] ${currentSourceType} link failed, retrying online...`);
+                if (currentSourceType === 'cache') localStorage.removeItem(`lx_url_${cleanSongData(playbackSong).id}_${currentQuality || targetQuality}`);
+                playSong(playbackSong, index, targetQuality, noPlay, currentSourceType === 'server_cache' ? 'local_retry' : true);
+            };
+            audio.addEventListener('error', retryHandler, { once: true });
+            const cleanup = () => audio.removeEventListener('error', retryHandler);
+            audio.addEventListener('playing', cleanup, { once: true });
+            audio.addEventListener('pause', cleanup, { once: true });
+        }
 
         audio.src = finalUrl;
 
@@ -5837,13 +5882,11 @@ async function toggleRemasterFeature(enabled) {
 window.getRemasterStorageUsername = getRemasterStorageUsername;
 window.toggleRemasterFeature = toggleRemasterFeature;
 
-
-
 async function updateSetting(key, value) {
     if (SETTINGS_UI_MAP[key]?.normalize) {
         value = SETTINGS_UI_MAP[key].normalize(value);
     }
-    const restrictedKeys = ['enableServerCache', 'enableRemaster', 'preferredQuality', 'enablePublicSources', 'embedLyricToFile', 'preferServerCache'];
+    const restrictedKeys = ['enableServerCache', 'enableServerLyricCache', 'serverCacheLocation', 'serverCacheNamingPattern', 'downloadConcurrency', 'enableOnlyDownloadMode', 'enableRemaster', 'preferredQuality', 'enablePublicSources', 'embedLyricToFile', 'preferServerCache'];
     const isPublic = !isUserLoggedIn() || currentListData?.username === '_open' || currentListData?.username === 'default' || window.isViewingPublicFavorites;
     const enablePublicRestriction = window.lx_config?.['user.enablePublicRestriction'];
     const enableLoginCacheRestriction = window.lx_config?.['user.enableLoginCacheRestriction'];
@@ -5930,7 +5973,6 @@ const SETTINGS_UI_MAP = {
     enableAutoSwitchSource: { id: 'setting-auto-switch-source', type: 'checkbox' },
     enableAutoSwitchApiSource: { id: 'setting-auto-switch-api-source', type: 'checkbox' },
     enableAutoSkipOnError: { id: 'setting-auto-skip-on-error', type: 'checkbox' },
-    enableAutoRetryOnLinkFail: { id: 'setting-auto-retry-on-link-fail', type: 'checkbox' },
     enableAutoDegradeQuality: { id: 'setting-auto-degrade-quality', type: 'checkbox' },
     playbackErrorPriority: { id: 'setting-playback-error-priority', type: 'value' },
     enablePreloader: { id: 'setting-enable-preloader', type: 'checkbox' },
@@ -5963,7 +6005,6 @@ const SETTINGS_UI_MAP = {
         type: 'checkbox',
         action: () => window.LocalMusicManager?.syncRemasterVisibility()
     },
-
     enableKeyboardShortcuts: { id: 'setting-enable-shortcuts', type: 'checkbox' },
     enableCrossfade: { id: 'setting-enable-crossfade', type: 'checkbox' },
     keepScreenAwake: {
@@ -6063,8 +6104,16 @@ const SETTINGS_UI_MAP = {
     enableLyricCache: { id: 'setting-enable-lyric-cache', type: 'checkbox' },
     enableSongUrlCache: { id: 'setting-enable-url-cache', type: 'checkbox' },
     enableServerCache: { id: 'setting-enable-server-cache', type: 'checkbox' },
+    enableServerLyricCache: { id: 'setting-enable-server-lyric-cache', type: 'checkbox' },
     embedLyricToFile: { id: 'setting-embed-lyric-to-file', type: 'checkbox' },
     preferServerCache: { id: 'setting-prefer-server-cache', type: 'checkbox' },
+    enableOnlyDownloadMode: { id: 'setting-only-download-mode', type: 'checkbox' },
+    serverCacheLocation: { id: 'setting-server-cache-location', type: 'value' },
+    serverCacheNamingPattern: {
+        id: 'setting-server-cache-naming',
+        type: 'value',
+        normalize: value => value === 'standard' ? 'standard' : 'simple'
+    },
     enableProxyPlayback: { id: 'toggle-proxy-playback', type: 'checkbox' },
     enableProxyDownload: { id: 'toggle-proxy-download', type: 'checkbox' },
     enableAutoProxy: { id: 'toggle-auto-proxy', type: 'checkbox' },
@@ -6102,7 +6151,7 @@ function syncSettingsUI(key = null, value = null) {
     const enablePublicRestriction = window.lx_config?.['user.enablePublicRestriction'];
     const enableLoginCacheRestriction = window.lx_config?.['user.enableLoginCacheRestriction'];
     const isAdmin = !!localStorage.getItem('lx_admin_password');
-    const restrictedKeys = ['enableServerCache', 'enableRemaster', 'preferredQuality', 'enablePublicSources', 'embedLyricToFile', 'preferServerCache'];
+    const restrictedKeys = ['enableServerCache', 'enableServerLyricCache', 'serverCacheLocation', 'serverCacheNamingPattern', 'downloadConcurrency', 'enableOnlyDownloadMode', 'enableRemaster', 'preferredQuality', 'enablePublicSources', 'embedLyricToFile', 'preferServerCache'];
 
     const updateItem = (itemKey, itemValue, isSingle) => {
         const config = SETTINGS_UI_MAP[itemKey];

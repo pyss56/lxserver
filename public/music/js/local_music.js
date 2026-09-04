@@ -12,8 +12,6 @@ window.LocalMusicManager = {
     selectedItems: new Set(),
     searchKeyword: '',
     filterFolder: 'all',  // 单选，'all' | 'cache' | 'music'
-    filterLibrary: 'all', // 单选，'all' | 'personal' | 'library'（音乐库来源筛选）
-    filterView: 'all',    // 顶部来源分段标签：'all' | 'cache' | 'music' | 'library'
     filterQuality: new Set(), // 多选 Set，空集合 = 不限制
     filterStatus: new Set(),  // 多选 Set，空集合 = 不限制
     filterSource: new Set(),  // 多选 Set，空集合 = 不限制
@@ -35,7 +33,6 @@ window.LocalMusicManager = {
     remasterResultOffset: 0,
     remasterResults: [],
     remasterResultFilter: 'all',
-    remasterFilterLibrary: 'all', // 单选，'all' | 'personal' | 'library'（洗版选择中的音乐库来源筛选）
     remasterTaskId: '',
     remasterTargetQuality: 'flac',
     remasterLastTerminalTaskId: '',
@@ -581,8 +578,6 @@ window.LocalMusicManager = {
         const filters = {
             searchKeyword: this.searchKeyword,
             filterFolder: this.filterFolder,
-            filterLibrary: this.filterLibrary,
-            filterView: this.filterView,
             filterQuality: Array.from(this.filterQuality),
             filterStatus: Array.from(this.filterStatus),
             filterSource: Array.from(this.filterSource),
@@ -600,7 +595,6 @@ window.LocalMusicManager = {
                 const filters = JSON.parse(cached);
                 this.searchKeyword = filters.searchKeyword || '';
                 this.filterFolder = filters.filterFolder || 'all';
-                this.filterLibrary = filters.filterLibrary || 'all';
                 const toSet = (v) => {
                     if (!v || v === 'all') return new Set();
                     if (Array.isArray(v)) return new Set(v);
@@ -620,10 +614,6 @@ window.LocalMusicManager = {
                 if (document.getElementById('lm-folder-select')) {
                     document.getElementById('lm-folder-select').value = this.filterFolder;
                     this._syncSelectActive('lm-folder-select');
-                }
-                if (document.getElementById('lm-library-select')) {
-                    document.getElementById('lm-library-select').value = this.filterLibrary;
-                    this._syncSelectActive('lm-library-select');
                 }
                 // 标签按钮 UI 更新
                 this._syncTagUI('lm-quality-tags', this.filterQuality);
@@ -784,58 +774,7 @@ window.LocalMusicManager = {
     changeFolder() {
         const el = document.getElementById('lm-folder-select');
         this.filterFolder = el.value;
-        this.filterView = this._deriveView();
-        this._syncViewTabs();
         this.applyFilters();
-    },
-
-    changeLibrary() {
-        const el = document.getElementById('lm-library-select');
-        this.filterLibrary = el ? el.value : 'all';
-        this.filterView = this._deriveView();
-        this._syncViewTabs();
-        this.applyFilters();
-    },
-
-    // 顶部来源分段标签（全部 / 缓存 / 下载 / 音乐库）切换
-    changeView(v) {
-        this.filterView = (v === 'cache' || v === 'music' || v === 'library' || v === 'all') ? v : 'all';
-        const map = {
-            all:     { folder: 'all',   library: 'all' },
-            cache:   { folder: 'cache', library: 'personal' },
-            music:   { folder: 'music', library: 'personal' },
-            library: { folder: 'all',   library: 'library' },
-        };
-        const m = map[this.filterView];
-        this.filterFolder = m.folder;
-        this.filterLibrary = m.library;
-        // 同步高级筛选下拉，避免状态不一致
-        const fSel = document.getElementById('lm-folder-select');
-        if (fSel) { fSel.value = m.folder; this._syncSelectActive('lm-folder-select'); }
-        const lSel = document.getElementById('lm-library-select');
-        if (lSel) { lSel.value = m.library; this._syncSelectActive('lm-library-select'); }
-        this._syncViewTabs();
-        this.applyFilters();
-    },
-
-    // 由底层 folder/library 反推当前应高亮的分段标签
-    _deriveView() {
-        if (this.filterLibrary === 'library') return 'library';
-        if (this.filterLibrary === 'personal') {
-            if (this.filterFolder === 'cache') return 'cache';
-            if (this.filterFolder === 'music') return 'music';
-            return 'all';
-        }
-        return 'all';
-    },
-
-    // 同步顶部来源分段标签的激活态
-    _syncViewTabs() {
-        const tabs = document.querySelectorAll('#lm-view-tabs .lm-view-tab');
-        tabs.forEach(btn => {
-            if (btn.dataset.view === this.filterView) btn.classList.add('active');
-            else btn.classList.remove('active');
-        });
     },
 
     toggleUnindexed() {
@@ -903,8 +842,6 @@ window.LocalMusicManager = {
         this.searchKeyword = '';
         this.quickSearchKeyword = '';
         this.filterFolder = 'all';
-        this.filterLibrary = 'all';
-        this.filterView = 'all';
         this.filterQuality = new Set();
         this.filterStatus = new Set();
         this.filterSource = new Set();
@@ -930,16 +867,11 @@ window.LocalMusicManager = {
             document.getElementById('lm-folder-select').value = 'all';
             this._syncSelectActive('lm-folder-select');
         }
-        if (document.getElementById('lm-library-select')) {
-            document.getElementById('lm-library-select').value = 'all';
-            this._syncSelectActive('lm-library-select');
-        }
 
         // 清空所有标签按钮激活状态
         this._syncTagUI('lm-quality-tags', this.filterQuality);
         this._syncTagUI('lm-source-tags', this.filterSource);
         this._syncTagUI('lm-status-tags', this.filterStatus);
-        this._syncViewTabs();
 
         this.selectedSubPath = '';
         const subPathText = document.getElementById('lm-subpath-text');
@@ -1090,10 +1022,6 @@ window.LocalMusicManager = {
             // Folder check（单选）
             if (this.filterFolder !== 'all' && item.folder !== this.filterFolder) return false;
 
-            // 音乐库筛选（单选）：library=仅共享音乐库 / personal=仅个人(非音乐库) / all=不限
-            if (this.filterLibrary === 'library' && item.location !== 'library') return false;
-            if (this.filterLibrary === 'personal' && item.location === 'library') return false;
-
             // Quality check（多选）
             if (this.filterQuality.size > 0 && !this.filterQuality.has(item.quality)) return false;
 
@@ -1200,7 +1128,6 @@ window.LocalMusicManager = {
 
         // 同步所有 select 的 active 状态（非 all 时背景高亮）
         this._syncSelectActive('lm-folder-select');
-        this._syncSelectActive('lm-library-select');
         this._syncSelectActive('lm-sort-by');
         this._syncSelectActive('lm-sort-order');
 
@@ -1373,10 +1300,6 @@ window.LocalMusicManager = {
             };
 
             const folderIcon = item.folder === 'music' ? '<i class="fas fa-download text-blue-500 mr-1" title="下载目录"></i>' : '<i class="fas fa-hdd text-emerald-500 mr-1" title="缓存目录"></i>';
-            const isLibraryItem = item.location === 'library';
-            const libraryBadge = isLibraryItem
-                ? '<span class="text-[10px] text-amber-600 dark:text-amber-400 border border-amber-400/50 dark:border-amber-500/50 rounded px-1 scale-90 inline-block" title="共享音乐库 (/music，所有用户可见)">音乐库</span>'
-                : '';
 
             html += `
             <div class="grid grid-cols-12 gap-2 md:gap-4 p-3 md:p-2 items-center rounded-xl hover:t-bg-item-hover transition-all t-border-main border-b last:border-b-0 group relative ${isSelected ? 't-bg-item-hover ring-1 ring-emerald-500/30' : ''}" data-lm-row-index="${index}">
@@ -1412,7 +1335,6 @@ window.LocalMusicManager = {
                             <div class="flex items-center gap-1 px-1.5 py-0.5 bg-gray-100/80 dark:bg-gray-800/80 rounded-full t-text-muted">
                                 ${folderIcon}
                                 <span class="font-bold uppercase tracking-tighter" title="${safeSourceTitle}">${safeSource}</span>
-                                ${libraryBadge}
                             </div>
                             
                             ${item.subPath ? `<span class="t-text-muted opacity-50 truncate max-w-[60px] italic">${safeSubPath}</span>` : ''}
@@ -1451,10 +1373,9 @@ window.LocalMusicManager = {
 
                 <!-- Source/Info with Metadata Status -->
                 <div class="hidden md:flex flex-col md:col-span-2 lg:col-span-1 text-xs t-text-muted pr-2">
-                    <div class="flex items-center gap-1 mb-1 flex-wrap">
+                    <div class="flex items-center gap-1 mb-1">
                         ${folderIcon}
                         <span class="truncate font-medium" title="${safeSourceTitle}">${safeSource}</span>
-                        ${libraryBadge}
                     </div>
                     ${item.subPath ? `<div class="text-[9px] text-emerald-500 font-mono truncate mb-1" title="${safeSubPath}"><i class="far fa-folder mr-1 opacity-70"></i>${safeSubPath}</div>` : ''}
                     <div class="flex flex-wrap gap-1">
@@ -2850,13 +2771,7 @@ window.LocalMusicManager = {
 
     getRemasterFilteredItems() {
         const keyword = this.remasterSearchKeyword;
-        let items = this.getRemasterSelectableItems();
-        // 音乐库来源筛选（单选）：library=仅共享音乐库 / personal=仅个人 / all=不限
-        if (this.remasterFilterLibrary === 'library') {
-            items = items.filter(item => item.location === 'library');
-        } else if (this.remasterFilterLibrary === 'personal') {
-            items = items.filter(item => item.location !== 'library');
-        }
+        const items = this.getRemasterSelectableItems();
         if (!keyword) return items;
         const searchMatcher = this.createSearchMatcher(keyword);
         return items.filter(item => searchMatcher(this.getSearchValues(item, true)));
@@ -2867,13 +2782,6 @@ window.LocalMusicManager = {
         for (const filename of this.remasterSelectedItems) {
             if (!available.has(filename)) this.remasterSelectedItems.delete(filename);
         }
-    },
-
-    changeRemasterLibraryFilter() {
-        const el = document.getElementById('lm-remaster-library-filter');
-        this.remasterFilterLibrary = el ? el.value : 'all';
-        this.remasterSelectionPage = 1;
-        this.renderRemasterSelection();
     },
 
     setRemasterSearch(valueOrEl) {
@@ -2958,9 +2866,6 @@ window.LocalMusicManager = {
             container.innerHTML = pageItems.map(item => {
                 const selected = this.remasterSelectedItems.has(item.filename);
                 const qualityName = window.QualityManager?.getQualityDisplayName(item.quality) || item.quality || '未知音质';
-                const libraryBadge = item.location === 'library'
-                    ? '<span class="shrink-0 text-[10px] text-amber-600 dark:text-amber-400 border border-amber-400/50 dark:border-amber-500/50 rounded px-1 scale-90 inline-block" title="共享音乐库 (/music，所有用户可见)">音乐库</span>'
-                    : '';
                 return `
                     <label class="min-h-12 px-3 py-2 flex items-center gap-3 border-b last:border-b-0 t-border-main ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:t-bg-track'}">
                         <input type="checkbox" data-remaster-filename="${this.escapeAttr(item.filename)}" ${selected ? 'checked' : ''} ${disabled ? 'disabled' : ''}
@@ -2969,7 +2874,6 @@ window.LocalMusicManager = {
                             <span class="block text-xs font-bold t-text-main truncate">${this.escapeHtml(item.name || item.filename)}</span>
                             <span class="block text-[10px] t-text-muted truncate">${this.escapeHtml(item.singer || '未知歌手')} · ${this.escapeHtml(item.album || '未知专辑')}</span>
                         </span>
-                        ${libraryBadge}
                         <span class="shrink-0 text-[10px] t-text-muted">${this.escapeHtml(qualityName)}</span>
                     </label>`;
             }).join('');
