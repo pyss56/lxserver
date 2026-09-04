@@ -1,6 +1,7 @@
 name: Build and Push Docker Image
 
 # Gitea Actions 专用：触发目录为 .gitea/workflows（GitHub 的 .github/workflows 不会被 Gitea 读取）
+# 本 workflow 完全本地化：不引用任何 github.com 资源，克隆 / 登录 / 推送全部走内网 Gitea。
 on:
   push:
     branches:
@@ -14,7 +15,11 @@ on:
 # 表现为推送后构建"秒失败"。需要排队控制时改为在 workflow 开头处理。
 
 env:
-  # Gitea 内置容器 registry 地址（与站点同域）
+  # 内网 Gitea 站点 / 容器 registry 地址（完全本地，不依赖 github.com）
+  GITEA_HOST: 10.3.3.15:3030
+  # 仓库路径（org/repo），显式写死，避免依赖 GitHub 兼容变量推断
+  GITEA_REPO: pyss56/lxserver
+  # 容器 registry 与站点同域
   REGISTRY: 10.3.3.15:3030
 
 jobs:
@@ -23,15 +28,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        # 不使用 actions/checkout：runner 所在网络无法访问 github.com，会卡在 clone action 仓库
-        # 改为直接从 Gitea 克隆（仓库可见时用内置 token 鉴权）
+      - name: Checkout repository (本地 Gitea 克隆)
+        # 不使用 actions/checkout：runner 网络无法访问 github.com，会卡在拉取 action 仓库。
+        # 直接从本地 Gitea 克隆；认证用 Gitea 自动注入的仓库 token（下方 secrets.GITHUB_TOKEN，
+        # 这是 Gitea 本地提供的 token，与 github.com 无关）。
         env:
           GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          HOST=$(echo "${GITHUB_SERVER_URL}" | sed 's|https\?://||')
+          # 清理工作区（Gitea 可能预置了部分文件），确保空目录后再克隆
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-          git clone "http://oauth2:${GITEA_TOKEN}@${HOST}/${GITHUB_REPOSITORY}.git" .
+          git clone "http://oauth2:${GITEA_TOKEN}@${GITEA_HOST}/${GITEA_REPO}.git" .
           git checkout "${GITHUB_SHA}"
           git log --oneline -1
 
@@ -42,7 +48,7 @@ jobs:
           echo "PROJECT_VERSION=$VERSION" >> $GITHUB_ENV
           echo "SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
           # registry 要求镜像名全小写
-          echo "IMAGE_NAME=$(echo ${GITHUB_REPOSITORY} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$(echo ${GITEA_REPO} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Update build hash
         # 只更新构建产物，不回推 git（避免 runner 需要写仓库权限）

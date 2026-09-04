@@ -136,6 +136,11 @@ Get "https://github.com/actions/checkout/info/refs?service=git-upload-pack": une
     git log --oneline -1
 ```
 
+> **补强（完全本地化）**：上面用 `GITHUB_SERVER_URL` 推断克隆主机，若 Gitea 的 `SERVER_URL` 配置不对会打到 github.com。
+> 现已改为在 `env` 里**显式写死** `GITEA_HOST: 10.3.3.15:3030` 与 `GITEA_REPO: pyss56/lxserver`，
+> checkout 直接 `git clone "http://oauth2:${GITEA_TOKEN}@${GITEA_HOST}/${GITEA_REPO}.git"`，
+> 不再依赖任何 `GITHUB_*` 兼容变量推断地址，运行时完全不碰 github.com（仅保留 Gitea 本地提供的 `GITHUB_SHA`/`GITHUB_ENV`/`GITHUB_TOKEN` 机制）。
+
 ### 4.2 ⚠️ 组织级 runner 缺失（隐患）
 
 ```
