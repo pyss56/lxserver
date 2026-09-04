@@ -25,7 +25,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # 不使用 actions/checkout：runner 所在网络无法访问 github.com，会卡在 clone action 仓库
+        # 改为直接从 Gitea 克隆（仓库可见时用内置 token 鉴权）
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          HOST=$(echo "${GITHUB_SERVER_URL}" | sed 's|https\?://||')
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+          git clone "http://oauth2:${GITEA_TOKEN}@${HOST}/${GITHUB_REPOSITORY}.git" .
+          git checkout "${GITHUB_SHA}"
+          git log --oneline -1
 
       - name: Read version from config
         run: |
