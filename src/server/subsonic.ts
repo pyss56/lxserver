@@ -2033,18 +2033,21 @@ class SubsonicHandler {
         let metaChanged = false
         const action = isStar ? 'star' : 'unstar'
         const tag = isStar ? '已星标' : '已取消星标'
+        // 成功的 star/unstar 属于调试信息，仅在 subsonic.enableDebug 开启时记录
+        const debug = !!global.lx.config['subsonic.enableDebug']
+        const debugLog = (msg: string) => { if (debug) console.log(msg) }
 
         for (const id of ids) {
             if (id.startsWith('alb_')) {
                 isStar ? starredAlbums.add(id) : starredAlbums.delete(id)
                 metaChanged = true
-                console.log(`[Subsonic] ${action} 专辑 ${id} -> ${tag} (user=${username})`)
+                debugLog(`[Subsonic Debug] ${action} 专辑 ${id} -> ${tag} (user=${username})`)
                 continue
             }
             if (id.startsWith('art_')) {
                 isStar ? starredArtists.add(id) : starredArtists.delete(id)
                 metaChanged = true
-                console.log(`[Subsonic] ${action} 歌手 ${id} -> ${tag} (user=${username})`)
+                debugLog(`[Subsonic Debug] ${action} 歌手 ${id} -> ${tag} (user=${username})`)
                 continue
             }
             // 其余按歌曲 id 处理
@@ -2056,10 +2059,10 @@ class SubsonicHandler {
                 }
                 if (isStar) {
                     await userSpace.listManage.listDataManage.listMusicAdd('love', [found.music], location)
-                    console.log(`[Subsonic] ${action} 歌曲 ${id} -> 已加入我的收藏(love) 《${found.music.name}》(user=${username})`)
+                    debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已加入我的收藏(love) 《${found.music.name}》(user=${username})`)
                 } else {
                     await userSpace.listManage.listDataManage.listMusicRemove('love', [found.music.id])
-                    console.log(`[Subsonic] ${action} 歌曲 ${id} -> 已移出我的收藏(love) 《${found.music.name}》(user=${username})`)
+                    debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已移出我的收藏(love) 《${found.music.name}》(user=${username})`)
                 }
                 loveChanged = true
             } catch (e) {
@@ -2082,7 +2085,7 @@ class SubsonicHandler {
             }
         }
 
-        console.log(`[Subsonic] ${action} 完成: id 数=${ids.length}, 收藏变更=${loveChanged}, 星标元数据变更=${metaChanged} (user=${username})`)
+        debugLog(`[Subsonic Debug] ${action} 完成: id 数=${ids.length}, 收藏变更=${loveChanged}, 星标元数据变更=${metaChanged} (user=${username})`)
 
         return this.sendResponse(res, {}, format)
     }
