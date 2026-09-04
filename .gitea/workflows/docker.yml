@@ -15,12 +15,12 @@ on:
 # 表现为推送后构建"秒失败"。需要排队控制时改为在 workflow 开头处理。
 
 env:
-  # 内网 Gitea 站点 / 容器 registry 地址（完全本地，不依赖 github.com）
-  GITEA_HOST: 10.3.3.15:3030
+  # 内网 Gitea（走 HTTPS 反代 git.l.pyss.cn，证书 CA 签发、受信）；完全本地，不依赖 github.com
+  GITEA_HOST: git.l.pyss.cn
   # 仓库路径（org/repo），显式写死，避免依赖 GitHub 兼容变量推断
   GITEA_REPO: pyss56/lxserver
-  # 容器 registry 与站点同域
-  REGISTRY: 10.3.3.15:3030
+  # 容器 registry 走 HTTPS 域名（docker 默认 443/TLS，无需 runner 侧 insecure-registries）
+  REGISTRY: git.l.pyss.cn
 
 jobs:
   build_and_push:
@@ -37,7 +37,7 @@ jobs:
         run: |
           # 清理工作区（Gitea 可能预置了部分文件），确保空目录后再克隆
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-          git clone "http://oauth2:${GITEA_TOKEN}@${GITEA_HOST}/${GITEA_REPO}.git" .
+          git clone "https://oauth2:${GITEA_TOKEN}@${GITEA_HOST}/${GITEA_REPO}.git" .
           git checkout "${GITHUB_SHA}"
           git log --oneline -1
 

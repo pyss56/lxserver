@@ -188,36 +188,34 @@ step5 Push image                        ⏭ skipped
 
 **修复方向二选一**（均需服务器侧操作，见 §5.1）：
 
-- **A（推荐）** 把 `10.3.3.15:3030` 加进 runner 宿主 docker 的 `insecure-registries`
-- **B** 给 Gitea 站点加 HTTPS 反代（Nginx + 证书），再把 workflow 的 `REGISTRY` 改成 https 地址
+- **A** 把 `10.3.3.15:3030` 加进 runner 宿主 docker 的 `insecure-registries`
+- **B（已采用 ✅）** 走现成的 HTTPS 反代 `https://git.l.pyss.cn`（CA 签发证书、受信、且已转发 `/v2/` registry 端点），把 workflow 的 `GITEA_HOST` / `REGISTRY` 改成 `git.l.pyss.cn`。docker 走标准 TLS，无需 runner 侧 `insecure-registries`，无需动服务器 docker 配置。
+  - 实测：`curl https://git.l.pyss.cn/v2/` → `401` 且 `cert_verify=0`（证书受信、registry 端点可达），`/api/v1/version` → `1.27.3`（与 `10.3.3.15:3030` 同一个 Gitea）。
 
 ---
 
 ## 5. 下一步操作（按优先级）
 
-### 5.0 先做：让 docker 信任 HTTP registry（当前唯一阻塞）
+### 5.0 让 docker 连接 registry（已解决 ✅，采用方案 B）
 
-在**运行 act_runner 的那台服务器**上执行（需 root）：
+不再需要改 runner 宿主的 docker 配置。已改用 HTTPS 反代 `https://git.l.pyss.cn`：
+workflow 把 `GITEA_HOST` 与 `REGISTRY` 都指向 `git.l.pyss.cn`，docker 走标准 TLS（443），
+证书为 CA 签发、受信，`/v2/` 端点已被反代转发，因此 `docker login` / `push` 不会再报
+`Get "https://10.3.3.15:3030/v2/": EOF`。
+
+（以下 A 方案保留作备选，仅在反代不可用、必须直连 HTTP registry 时才需要。）
+
+<details><summary>方案 A 备选：在 runner 宿主加 insecure-registries（需 root）</summary>
 
 ```bash
-# 1) 先看现有配置，避免覆盖已有内容
 sudo cat /etc/docker/daemon.json
-
-# 2) 合并写入 insecure-registries（文件已有内容时用 jq 合并，不要直接覆盖）
 sudo jq '. + {"insecure-registries": ((.["insecure-registries"] // []) + ["10.3.3.15:3030"] | unique)}' \
   /etc/docker/daemon.json > /tmp/daemon.json && sudo mv /tmp/daemon.json /etc/docker/daemon.json
-
-# 没有 jq 且文件为空时可直接写：
-# echo '{ "insecure-registries": ["10.3.3.15:3030"] }' | sudo tee /etc/docker/daemon.json
-
-# 3) 重启 docker（会短暂中断该宿主上的容器）
 sudo systemctl restart docker
-
-# 4) 验证
 docker info | grep -A2 "Insecure Registries"
 ```
 
-> 若 act_runner 自身以容器运行，重启后确认 runner 容器被自动拉起（需 `--restart unless-stopped`）。
+</details>
 
 配置好后**不用再推代码**，直接重新触发：
 
@@ -289,9 +287,9 @@ docker run -d --name act_runner_pyss56 --restart unless-stopped \
 ### 5.4 构建成功后
 
 ```bash
-docker pull 10.3.3.15:3030/pyss56/lxserver:latest
+docker pull git.l.pyss.cn/pyss56/lxserver:latest
 docker run -d --name lxserver -p 9527:9527 -v /opt/lxserver/data:/server/data \
-  10.3.3.15:3030/pyss56/lxserver:latest
+  git.l.pyss.cn/pyss56/lxserver:latest
 ```
 
 并到 Gitea 仓库页 **Packages** 中确认镜像已出现。
