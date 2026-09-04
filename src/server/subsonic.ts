@@ -2031,30 +2031,39 @@ class SubsonicHandler {
         const location = (global.lx.config['list.addMusicLocationType'] || 'bottom') as 'top' | 'bottom'
         let loveChanged = false
         let metaChanged = false
+        const action = isStar ? 'star' : 'unstar'
+        const tag = isStar ? '已星标' : '已取消星标'
 
         for (const id of ids) {
             if (id.startsWith('alb_')) {
                 isStar ? starredAlbums.add(id) : starredAlbums.delete(id)
                 metaChanged = true
+                console.log(`[Subsonic] ${action} 专辑 ${id} -> ${tag} (user=${username})`)
                 continue
             }
             if (id.startsWith('art_')) {
                 isStar ? starredArtists.add(id) : starredArtists.delete(id)
                 metaChanged = true
+                console.log(`[Subsonic] ${action} 歌手 ${id} -> ${tag} (user=${username})`)
                 continue
             }
             // 其余按歌曲 id 处理
             try {
                 const found = await this.findMusicById(username, id)
-                if (!found) continue
+                if (!found) {
+                    console.warn(`[Subsonic] ${action} 歌曲 ${id} 跳过：无法解析该歌曲(不在 收藏/默认/歌单/本地库/搜索缓存 中)，未做任何改动 (user=${username})`)
+                    continue
+                }
                 if (isStar) {
                     await userSpace.listManage.listDataManage.listMusicAdd('love', [found.music], location)
+                    console.log(`[Subsonic] ${action} 歌曲 ${id} -> 已加入我的收藏(love) 《${found.music.name}》(user=${username})`)
                 } else {
                     await userSpace.listManage.listDataManage.listMusicRemove('love', [found.music.id])
+                    console.log(`[Subsonic] ${action} 歌曲 ${id} -> 已移出我的收藏(love) 《${found.music.name}》(user=${username})`)
                 }
                 loveChanged = true
             } catch (e) {
-                console.error(`[Subsonic] ${isStar ? 'star' : 'unstar'} song error (${id}):`, e)
+                console.error(`[Subsonic] ${action} song error (${id}):`, e)
             }
         }
 
@@ -2072,6 +2081,8 @@ class SubsonicHandler {
                 console.error('[Subsonic] createSnapshot error:', e)
             }
         }
+
+        console.log(`[Subsonic] ${action} 完成: id 数=${ids.length}, 收藏变更=${loveChanged}, 星标元数据变更=${metaChanged} (user=${username})`)
 
         return this.sendResponse(res, {}, format)
     }
