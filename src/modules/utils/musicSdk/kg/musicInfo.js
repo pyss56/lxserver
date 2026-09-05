@@ -34,7 +34,9 @@ const createGetMusicInfosTask = (hashs) => {
       'User-Agent': 'Android712-AndroidPhone-11451-376-0-FeeCacheUpdate-wifi',
       'x-router': 'kmr.service.kugou.com',
     },
-  }).then(data => data.map(s => s[0])))
+    // createHttpFetch 已返回 body.data（音频对象数组），不要再 .map(s => s[0])，
+    // 否则每个对象会被取成 undefined，导致永远取不到详情。
+  }).then(d => d))
 }
 
 export const filterMusicInfoList = (rawList) => {
@@ -103,12 +105,19 @@ export const getMusicInfos = async (hashs) => {
   return filterMusicInfoList(await Promise.all(createGetMusicInfosTask(hashs)).then(data => data.flat()))
 }
 
-export const getMusicInfoRaw = async (hash) => {
-  return Promise.all(createGetMusicInfosTask([{ hash }])).then(data => data.flat()[0])
+// kg 单曲标识有两种：文件 hash（32 位十六进制）或 audio_id（纯数字）。
+// album_audio/audio 这两个都能查，但必须用对应字段名，否则返回空壳。
+const toKgQueryItem = (songId) => {
+  const s = String(songId)
+  return /^\d+$/.test(s) ? { audio_id: s } : { hash: s }
 }
 
-export const getMusicInfo = async (hash) => {
-  return getMusicInfos([{ hash }]).then(data => data[0])
+export const getMusicInfoRaw = async (songId) => {
+  return Promise.all(createGetMusicInfosTask([toKgQueryItem(songId)])).then(data => data.flat()[0])
+}
+
+export const getMusicInfo = async (songId) => {
+  return getMusicInfos([toKgQueryItem(songId)]).then(data => data[0])
 }
 
 export const getMusicInfosByList = (list) => {
