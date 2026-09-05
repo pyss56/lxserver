@@ -999,6 +999,19 @@
                                     <i class="fas fa-folder text-[9px] md:text-[10px]"></i>
                                     <span id="lm-subpath-text" class="max-w-[40px] md:max-w-[60px] truncate">全部</span>
                                 </button>
+                                <!-- [新增] 顶部来源分段标签：全部 / 缓存 / 下载 / 音乐库 -->
+                                <div id="lm-view-tabs"
+                                    class="flex items-center gap-0.5 md:gap-1 ml-1 bg-gray-100/50 dark:bg-gray-700/30 p-0.5 rounded-lg border t-border-main">
+                                    <button class="lm-view-tab !text-[9px] md:!text-[10px] px-2 py-0.5 rounded-md transition-colors"
+                                        data-view="all" onclick="window.LocalMusicManager.changeView('all')">全部</button>
+                                    <button class="lm-view-tab !text-[9px] md:!text-[10px] px-2 py-0.5 rounded-md transition-colors"
+                                        data-view="cache" onclick="window.LocalMusicManager.changeView('cache')">缓存</button>
+                                    <button class="lm-view-tab !text-[9px] md:!text-[10px] px-2 py-0.5 rounded-md transition-colors"
+                                        data-view="music" onclick="window.LocalMusicManager.changeView('music')">下载</button>
+                                    <button class="lm-view-tab lm-view-tab-library !text-[9px] md:!text-[10px] px-2 py-0.5 rounded-md transition-colors flex items-center gap-0.5"
+                                        data-view="library" onclick="window.LocalMusicManager.changeView('library')">
+                                        <i class="fas fa-music"></i>音乐库</button>
+                                </div>
                             </div>
                             <!-- [新增] 公开歌曲 切换按钮 -->
                             <button id="lm-public-songs-btn" onclick="window.LocalMusicManager.togglePublicSongs()"
@@ -1206,6 +1219,18 @@
                                             <option value="asc">升序</option>
                                         </select>
                                     </div>
+                                </div>
+
+                                <!-- 音乐库来源筛选 -->
+                                <div class="flex items-center gap-1 shrink-0">
+                                    <label
+                                        class="text-[9px] md:text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest ml-1 min-w-[35px] md:min-w-[45px]">库</label>
+                                    <select id="lm-library-select" onchange="window.LocalMusicManager.changeLibrary()"
+                                        class="lm-select !text-[9px] md:!text-[10px] !py-0.5">
+                                        <option value="all">全部</option>
+                                        <option value="personal">个人</option>
+                                        <option value="library">音乐库</option>
+                                    </select>
                                 </div>
 
                                 <!-- 数据状态 -->
@@ -1871,26 +1896,6 @@
                                     </div>
 
                                     <!-- Server Lyric Cache Setting -->
-                                    <div class="flex items-center justify-between pb-3 border-b t-border-main">
-                                        <div>
-                                            <div class="text-sm font-bold t-text-main flex items-center">
-                                                缓存歌词文件
-                                                <span class="setting-tooltip-trigger ml-1">
-                                                    <i class="fas fa-question-circle"></i>
-                                                    <span
-                                                        class="setting-tooltip-content">将歌词文件缓存到同服务器配置的缓存目录下，优先供多端同步极速加载。</span>
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="setting-enable-server-lyric-cache"
-                                                class="sr-only peer"
-                                                onchange="updateSetting('enableServerLyricCache', this.checked)">
-                                            <div
-                                                class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 transition-all">
-                                            </div>
-                                        </label>
-                                    </div>
 
                                     <!-- Embed Lyric to File Setting -->
                                     <div class="flex items-center justify-between pb-3 border-b t-border-main">
@@ -1987,44 +1992,8 @@
                                         </div>
                                     </div>
 
-                                    <!-- Cache Location Setting -->
-                                    <div class="pb-3 border-b t-border-main">
-                                        <div class="flex items-center justify-between mb-2">
-                                            <div>
-                                                <div class="text-sm font-bold t-text-main flex items-center">
-                                                    缓存歌曲位置
-                                                    <span class="setting-tooltip-trigger ml-1">
-                                                        <i class="fas fa-question-circle"></i>
-                                                        <span class="setting-tooltip-content">设置服务器端存储缓存文件的具体路径。</span>
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <select id="setting-server-cache-location"
-                                            onchange="updateSetting('serverCacheLocation', this.value); updateServerCacheConfig(this.value)"
-                                            class="lm-select !w-full !py-2.5">
-                                            <option value="data">DATA_PATH (WebDAV同步)</option>
-                                            <option value="root">运行目录 (仅本地)</option>
-                                        </select>
+                                    <!-- Shared Music Library -->
 
-                                        <div class="mt-4 mb-2 flex items-center justify-between">
-                                            <div class="text-sm font-bold t-text-main flex items-center">
-                                                歌曲命名方式
-                                                <span class="setting-tooltip-trigger ml-1">
-                                                    <i class="fas fa-question-circle"></i>
-                                                    <span
-                                                        class="setting-tooltip-content">设置服务端存储文件的命名规则（对标准缓存和仅下载模式均生效）。不影响已有文件。</span>
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <select id="setting-server-cache-naming"
-                                            onchange="updateSetting('serverCacheNamingPattern', this.value); updateServerCacheConfig(null, this.value)"
-                                            class="lm-select !w-full !py-2.5">
-                                            <option value="standard">标准 (Name_-_Singer_-_Source_-_ID_-_Quality)
-                                            </option>
-                                            <option value="simple">简洁 (Name - Singer - Quality - Album)</option>
-                                        </select>
-                                    </div>
 
                                     <div
                                         class="text-xs text-gray-500 italic mt-1 mb-2 p-2 bg-yellow-50 rounded border border-yellow-100 flex items-start gap-1">
@@ -2950,6 +2919,35 @@
                                                 </div>
                                             </div>
 
+                                            <!-- Auto Retry on Link Fail -->
+                                            <div
+                                                class="t-bg-panel rounded-xl border t-border-main p-4 hover:shadow-sm transition-shadow">
+                                                <div class="flex items-center justify-between">
+                                                    <div>
+                                                        <h4 class="text-sm font-bold t-text-main flex items-center">
+                                                            失败自动重解析链接
+                                                            <span class="setting-tooltip-trigger ml-1">
+                                                                <i class="fas fa-question-circle"></i>
+                                                                <span class="setting-tooltip-content">
+                                                                    播放中途链接过期/失效时，先用同一音源+同一音质重新解析拿新链接续播，而不是立即换源或跳歌。<br>
+                                                                    <span class="text-emerald-500 font-medium">*
+                                                                        开启：同音源刷新一次再升级到换源/降级 |
+                                                                        关闭：跳过此步骤，直接走换源/降级/下一首</span>
+                                                                </span>
+                                                            </span>
+                                                        </h4>
+                                                    </div>
+                                                    <label class="relative inline-flex items-center cursor-pointer">
+                                                        <input type="checkbox" id="setting-auto-retry-on-link-fail"
+                                                            class="sr-only peer"
+                                                            onchange="updateSetting('enableAutoRetryOnLinkFail', this.checked)">
+                                                        <div
+                                                            class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 transition-all">
+                                                        </div>
+                                                    </label>
+                                                </div>
+                                            </div>
+
                                             <!-- Failure Strategy Priority -->
                                             <div
                                                 class="t-bg-panel rounded-xl border t-border-main p-4 hover:shadow-sm transition-shadow col-span-full">
@@ -2963,7 +2961,8 @@
                                                                     依次尝试失败恢复逻辑的优先级顺序，关闭的策略逻辑会被自动跳过。<br>
                                                                     <span class="text-emerald-500 font-medium">*
                                                                         切换平台 -> 降低音质：优先切换一次平台（仅一次），后续音质降级将在新平台执行。<br>
-                                                                        降低音质 -> 切换平台：原平台所有音质均解析失败后，切换至新平台并读取偏好音质尝试解析一次，若再次失败则直接播放下一首。</span>
+                                                                        降低音质 -> 切换平台：原平台所有音质均解析失败后，切换至新平台并读取偏好音质尝试解析一次，若再次失败则直接播放下一首。<br>
+                                                                        重解析链接：用同一音源+同一音质重新获取链接（应对链接过期），需开启「失败自动重解析链接」开关。</span>
                                                                 </span>
                                                             </span>
                                                         </h4>
@@ -2972,13 +2971,16 @@
                                                         <select id="setting-playback-error-priority"
                                                             onchange="updateSetting('playbackErrorPriority', this.value)"
                                                             class="lm-select !w-full !py-1.5">
-                                                            <option value="platform,quality,next">切换平台 -> 降低音质 -> 下一首
-                                                            </option>
-                                                            <option value="quality,platform,next">降低音质 -> 切换平台 -> 下一首
-                                                            </option>
+                                                            <option value="retry,platform,quality,next">重解析 → 切换平台 → 降音质 → 下一首</option>
+                                                            <option value="retry,quality,platform,next">重解析 → 降音质 → 切换平台 → 下一首</option>
+                                                            <option value="platform,quality,next">切换平台 → 降低音质 → 下一首</option>
+                                                            <option value="quality,platform,next">降低音质 → 切换平台 → 下一首</option>
                                                         </select>
                                                     </div>
                                                 </div>
+                                                <p class="text-xs t-text-muted mt-2">
+                                                    提示：各步骤需对应开关开启（失败自动重解析链接 / 自动切换平台 / 自动降低音质 / 失败自动下一首）才会在该顺序中生效，未开启的步骤会被自动跳过。
+                                                </p>
                                             </div>
                                         </div>
                                     </div>
@@ -4837,6 +4839,12 @@
                             <span class="ml-1 font-normal t-text-muted">已选 <span id="lm-remaster-selected-count">0</span> / <span id="lm-remaster-available-count">0</span> 首</span>
                         </div>
                         <div class="flex items-center gap-2">
+                            <select id="lm-remaster-library-filter" onchange="LocalMusicManager.changeRemasterLibraryFilter()" title="按音乐库来源筛选"
+                                class="lm-select !text-[10px] !py-1">
+                                <option value="all">全部来源</option>
+                                <option value="personal">个人</option>
+                                <option value="library">音乐库</option>
+                            </select>
                             <button id="lm-remaster-select-all" onclick="LocalMusicManager.selectAllRemasterResults()"
                                 class="h-7 px-2.5 text-[11px] border t-border-main rounded-md hover:t-bg-track disabled:opacity-40 disabled:cursor-not-allowed">
                                 全选结果

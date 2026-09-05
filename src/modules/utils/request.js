@@ -3,12 +3,16 @@ import { debugRequest } from './env'
 import { requestMsg } from './message'
 import { bHh } from './musicSdk/options'
 import { deflateRaw } from 'zlib'
-import * as tunnel from 'tunnel'
+import { HttpsProxyAgent } from 'https-proxy-agent'
+
+let proxyMisconfigWarned = false
 
 
 const httpsRxp = /^https:/
 
-// Mock proxy config from global.lx.config if needed, or environment variables
+// Proxy agent: route music SDK HTTP through proxy.all (or HTTPS_PROXY env).
+// NOTE: previously used tunnel.httpsOverHttp, which fails against some forward
+// proxies (socket disconnected before TLS). https-proxy-agent works reliably.
 const getRequestAgent = async url => {
     const config = global.lx?.config || {}
     const proxyEnabled = config['proxy.all.enabled']
@@ -18,15 +22,7 @@ const getRequestAgent = async url => {
         try {
             const proxyUrl = new URL(proxyAddress)
             if (proxyUrl.protocol === 'http:' || proxyUrl.protocol === 'https:') {
-                const isHttps = httpsRxp.test(url)
-                const tunnelOptions = {
-                    proxy: {
-                        host: proxyUrl.hostname,
-                        port: proxyUrl.port,
-                        proxyAuth: proxyUrl.username ? `${proxyUrl.username}:${proxyUrl.password}` : undefined
-                    }
-                }
-                return (isHttps ? tunnel.httpsOverHttp : tunnel.httpOverHttp)(tunnelOptions)
+                return new HttpsProxyAgent(proxyAddress)
             } else if (proxyUrl.protocol.startsWith('socks')) {
                 const { SocksProxyAgent } = await import('socks-proxy-agent')
                 return new SocksProxyAgent(proxyAddress)
@@ -36,18 +32,17 @@ const getRequestAgent = async url => {
         }
     }
 
-    if (process.env.HTTPS_PROXY) {
+    const envProxy = process.env.HTTPS_PROXY || process.env.https_proxy
+    if (envProxy) {
         try {
-            const proxyUrl = new URL(process.env.HTTPS_PROXY)
-            const tunnelOptions = {
-                proxy: {
-                    host: proxyUrl.hostname,
-                    port: proxyUrl.port,
-                    proxyAuth: proxyUrl.username ? `${proxyUrl.username}:${proxyUrl.password}` : undefined
-                }
-            }
-            return (httpsRxp.test(url) ? tunnel.httpsOverHttp : tunnel.httpOverHttp)(tunnelOptions)
+            return new HttpsProxyAgent(envProxy)
         } catch (e) { }
+    }
+
+    // 启用代理却既没配地址、也没环境变量 → 静默失效正是之前的坑，这里明确告警一次
+    if (proxyEnabled && !proxyAddress && !envProxy && !proxyMisconfigWarned) {
+        proxyMisconfigWarned = true
+        console.warn('[Request] proxy.all.enabled 为 true，但 proxy.all.address 未配置且未设置 HTTPS_PROXY 环境变量；源请求将不走代理。请在 config.js 配置地址或关闭代理。')
     }
 
     return undefined
@@ -128,6 +123,13 @@ export const httpFetch = (url, options = { method: 'get' }) => {
                 return Promise.reject(new Error(requestMsg.timeout))
             case 'ENOTFOUND':
                 return Promise.reject(new Error(requestMsg.notConnectNetwork))
+            case 'ECONNREFUSED': {
+                const cfg = global.lx?.config || {}
+                if (cfg['proxy.all.enabled'] && cfg['proxy.all.address']) {
+                    return Promise.reject(new Error(`无法连接代理服务器 ${cfg['proxy.all.address']}，请确认代理已启动/监听（搜索 / star / 封面 / 播放取链都依赖它）`))
+                }
+                return Promise.reject(new Error(requestMsg.notConnectNetwork))
+            }
             default:
                 return Promise.reject(err)
         }
@@ -266,6 +268,22 @@ const fetchData = async (url, method, {
         headers[s] = !s || `${(await handleDeflateRaw(Buffer.from(JSON.stringify(`${path}${v}`.match(regx), null, 1).concat(v)).toString('base64'))).toString('hex')}&${parseInt(v)}${v2}`
         delete headers[bHh]
     }
+    const httpOutDebug = !!global.lx?.config?.['subsonic.enableDebug']
+    if (httpOutDebug) {
+        const cfg = global.lx?.config || {}
+        const proxyInfo = cfg['proxy.all.enabled']
+            ? (cfg['proxy.all.address'] || '(proxy.all 已启用但未配置 address)')
+            : '(直连，未启用 proxy.all)'
+        const envProxy = process.env.HTTPS_PROXY || process.env.https_proxy
+        const reqBody = options.data || options.body || options.form || options.formData
+        console.log(`[HTTP Out] → ${(method || 'get').toUpperCase()} ${url}`)
+        console.log(`  Proxy=${proxyInfo}${envProxy ? `  envHTTPS_PROXY=${envProxy}` : ''}`)
+        console.log(`  Headers=${JSON.stringify(headers)}`)
+        if (reqBody != null) {
+            const b = typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody)
+            console.log(`  Body=${b.length > 2000 ? b.slice(0, 2000) + `…(truncated, total ${b.length} bytes)` : b}`)
+        }
+    }
     return request(url, {
         ...options,
         method,
@@ -275,6 +293,18 @@ const fetchData = async (url, method, {
         json: format === 'json',
         rejectUnauthorized: false,
     }, (err, resp, body) => {
+        if (httpOutDebug) {
+            if (err) {
+                console.log(`[HTTP Out] ← ${(method || 'get').toUpperCase()} ${url}  ERROR: ${err.message || err}${err.code ? ' (' + err.code + ')' : ''}`)
+            } else {
+                let preview = body
+                if (preview != null && typeof preview === 'object') preview = JSON.stringify(preview)
+                if (typeof preview === 'string' && preview.length > 2000) preview = preview.slice(0, 2000) + `…(truncated, total ${preview.length} bytes)`
+                console.log(`[HTTP Out] ← ${(method || 'get').toUpperCase()} ${url}  status=${resp?.statusCode}`)
+                console.log(`  RespHeaders=${JSON.stringify(resp?.headers || {})}`)
+                console.log(`  Body=${preview}`)
+            }
+        }
         if (err) return callback(err, null)
         callback(null, resp, body)
     })

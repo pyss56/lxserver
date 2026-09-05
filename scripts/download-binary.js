@@ -22,12 +22,15 @@ const PLATFORMS = [
 ];
 
 // 获取最新版本号
+// 返回带 v 前缀的版本号,如 "v1.5.1"（downloadPlatform 内部会 strip 掉 v）
 function getLatestVersion() {
     return new Promise((resolve, reject) => {
-        https.get(GITHUB_RELEASES_URL, (res) => {
+        const req = https.get(GITHUB_RELEASES_URL, (res) => {
+            // 消费响应体,避免 socket 挂起
+            res.resume();
             if (res.statusCode === 302 || res.statusCode === 301) {
                 const location = res.headers.location;
-                const versionMatch = location.match(/tag\/(v[\d.]+)/);
+                const versionMatch = location && location.match(/tag\/(v[\d.]+)/);
                 if (versionMatch) {
                     resolve(versionMatch[1]);
                 } else {
@@ -36,14 +39,17 @@ function getLatestVersion() {
             } else {
                 reject(new Error('获取最新版本失败，状态码: ' + res.statusCode));
             }
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        // 明确的超时,避免网络不通时无限期挂起
+        req.setTimeout(10000, () => req.destroy(new Error('查询最新版本超时')));
     });
 }
 
 // 下载文件
 function downloadFile(url, dest) {
     return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
+        const req = https.get(url, (res) => {
             if (res.statusCode === 302 || res.statusCode === 301) {
                 downloadFile(res.headers.location, dest).then(resolve).catch(reject);
                 return;
@@ -60,7 +66,9 @@ function downloadFile(url, dest) {
             file.on('error', (err) => {
                 fs.unlink(dest, () => reject(err));
             });
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        req.setTimeout(30000, () => req.destroy(new Error('下载超时')));
     });
 }
 
@@ -132,6 +140,12 @@ async function downloadPlatform(platformInfo, version, customTargetName) {
 async function main() {
     const isAll = process.argv.includes('--all');
 
+    // 允许通过环境变量跳过下载（离线 / CI / 已手动安装 fpcalc 时）
+    if (process.env.SKIP_FPCALC_DOWNLOAD) {
+        console.log('已设置 SKIP_FPCALC_DOWNLOAD，跳过 fpcalc 自动下载。');
+        return;
+    }
+
     try {
         if (!isAll) {
             // 环境检查：如果不是下载所有，则检查当前平台
@@ -146,33 +160,38 @@ async function main() {
             fs.mkdirSync(TARGET_DIR, { recursive: true });
         }
 
-        console.log('正在查询最新版本...');
-        const version = await getLatestVersion();
-        console.log(`最新版本: ${version}`);
+        // 查询与下载：失败不应阻断 npm start（fpcalc 仅为可选的指纹识别依赖）
+        try {
+            console.log('正在查询chromaprint最新版本...');
+            const version = await getLatestVersion();
+            console.log(`最新版本: ${version}`);
 
-        if (isAll) {
-            console.log('模式: 下载所有平台二进制文件');
-            for (const p of PLATFORMS) {
-                try {
-                    await downloadPlatform(p, version); // 使用默认的平台特定名称
-                } catch (err) {
-                    console.error(`下载 ${p.id} 失败: ${err.message}`);
+            if (isAll) {
+                console.log('模式: 下载所有平台二进制文件');
+                for (const p of PLATFORMS) {
+                    try {
+                        await downloadPlatform(p, version); // 使用默认的平台特定名称
+                    } catch (err) {
+                        console.error(`下载 ${p.id} 失败: ${err.message}`);
+                    }
+                }
+            } else {
+                const platform = os.platform();
+                const arch = os.arch();
+                const p = PLATFORMS.find(item => item.platform === platform && (item.arch === 'any' || item.arch === arch));
+                if (p) {
+                    // 单平台下载：使用通用名称 (fpcalc.exe / fpcalc)
+                    const genericName = platform === 'win32' ? 'fpcalc.exe' : 'fpcalc';
+                    await downloadPlatform(p, version, genericName);
+                } else {
+                    console.log(`未找到匹配当前平台 (${platform}-${arch}) 的预编译文件。`);
                 }
             }
-        } else {
-            const platform = os.platform();
-            const arch = os.arch();
-            const p = PLATFORMS.find(item => item.platform === platform && (item.arch === 'any' || item.arch === arch));
-            if (p) {
-                // 单平台下载：使用通用名称 (fpcalc.exe / fpcalc)
-                const genericName = platform === 'win32' ? 'fpcalc.exe' : 'fpcalc';
-                await downloadPlatform(p, version, genericName);
-            } else {
-                console.log(`未找到匹配当前平台 (${platform}-${arch}) 的预编译文件。`);
-            }
-        }
 
-        console.log('任务完成！');
+            console.log('任务完成！');
+        } catch (err) {
+            console.warn(`[警告] fpcalc 自动下载失败，不影响服务启动（可联网后重试，或手动安装 fpcalc）: ${err.message}`);
+        }
 
     } catch (error) {
         console.error('任务失败:', error.message);

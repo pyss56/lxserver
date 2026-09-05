@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { extractMetadata, loadUserApi, initUserApis, getApiStatus } from './userApi'
+import { customSourceLog } from '../utils/log4js'
 import type { IncomingMessage, ServerResponse } from 'http'
 
 // 读取请求体
@@ -105,7 +106,7 @@ async function getScriptInfo(scriptContent: string, allowUnsafeVM: boolean = fal
             requireUnsafe = !!result.requireUnsafe
         }
     } catch (e: any) {
-        console.warn('[CustomSource] 分析脚本支持源失败:', e.message)
+        customSourceLog.warn('[CustomSource] 分析脚本支持源失败:', e.message)
     }
 
     return { metadata, supportedSources, requireUnsafe }
@@ -245,7 +246,7 @@ export async function handleUpload(req: IncomingMessage, res: ServerResponse) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ success: true, id, metadata, supportedSources, owner: targetOwner, allowUnsafeVM: !!requireUnsafe || !!allowUnsafeVM }))
     } catch (err: any) {
-        console.error('[CustomSource] Upload error:', err)
+        customSourceLog.error('[CustomSource] Upload error:', err)
         res.writeHead(500, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ success: false, error: err.message }))
     }
@@ -634,7 +635,7 @@ export async function handleToggle(req: IncomingMessage, res: ServerResponse) {
                     status.error.includes('timeout')
                 ))
                 if (isRequireUnsafe) {
-                    console.warn(`[CustomSource] Detect REQUIRE_UNSAFE_VM or Timeout during toggle for ${targetId}, rolling back...`)
+                    customSourceLog.warn(`[CustomSource] Detect REQUIRE_UNSAFE_VM or Timeout during toggle for ${targetId}, rolling back...`)
                     // 回滚状态
                     target.enabled = oldEnabled
                     target.allowUnsafeVM = oldAllowUnsafeVM
@@ -671,7 +672,7 @@ export async function handleToggle(req: IncomingMessage, res: ServerResponse) {
             throw e
         }
     } catch (err: any) {
-        console.error('[CustomSource] Toggle error:', err)
+        customSourceLog.error('[CustomSource] Toggle error:', err)
         res.writeHead(500)
         res.end(err.message)
     }
@@ -764,7 +765,7 @@ export async function handleReorder(req: IncomingMessage, res: ServerResponse) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ success: true }))
     } catch (err: any) {
-        console.error('[CustomSource] Reorder error:', err)
+        customSourceLog.error('[CustomSource] Reorder error:', err)
         res.writeHead(500)
         res.end(err.message)
     }
@@ -850,7 +851,7 @@ export async function handleDelete(req: IncomingMessage, res: ServerResponse) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ success: true }))
     } catch (err: any) {
-        console.error('[CustomSource] Delete error:', err)
+        customSourceLog.error('[CustomSource] Delete error:', err)
         res.writeHead(500)
         res.end(err.message)
     }
