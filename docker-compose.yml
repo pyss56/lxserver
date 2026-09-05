@@ -10,8 +10,13 @@ services:
     volumes:
       # 数据持久化
       - ./data:/server/data
+      # 配置持久化（可选）：将本地 config.js 挂入容器覆盖默认配置，支持热重载
+      # 需先准备 ./config.js（可复制仓库 config.example.js 后修改），否则请勿取消注释
+      # - ./config.js:/server/config.js
     environment:
       # 环境变量配置，优先级高于 config.js
       - NODE_ENV=production
+      # 也可通过 CONFIG_PATH 指向挂载的配置文件（支持 .js / .json）
+      # - CONFIG_PATH=/server/config.js
       # 示例：通过环境变量设置用户
       # - LX_USER_myuser=mypassword

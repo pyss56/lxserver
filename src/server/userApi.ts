@@ -2,6 +2,7 @@ import { VM } from 'vm2'
 import * as fs from 'fs'
 import * as path from 'path'
 
+import { customSourceLog } from '../utils/log4js'
 import needle from 'needle'
 import * as crypto from 'crypto'
 import * as zlib from 'zlib'
@@ -377,40 +378,18 @@ export async function loadUserApi(apiInfo: UserApiInfo): Promise<any> {
         }
 
         loadedApis.set(`${fullApiInfo.owner}_${apiInfo.id}`, apiInstance)
-        console.log(`[UserApi] ✓ 成功加载: ${fullApiInfo.name} v${fullApiInfo.version} (Owner: ${fullApiInfo.owner})`)
-        console.log(`[UserApi]   支持源: ${Object.keys(registeredSources).join(', ')}`)
+        customSourceLog.debug(`[UserApi] ✓ 成功加载: ${fullApiInfo.name} v${fullApiInfo.version} (Owner: ${fullApiInfo.owner})`)
+        customSourceLog.debug(`[UserApi]   支持源: ${Object.keys(registeredSources).join(', ')}`)
         return { success: true, apiInstance, error: null }
     } catch (error: any) {
-        console.error(`[UserApi] ✗ 加载失败 ${fullApiInfo.name}:`, error.message)
+        customSourceLog.error(`[UserApi] ✗ 加载失败 ${fullApiInfo.name}:`, error.message)
         if (error.stack && error.message !== 'REQUIRE_UNSAFE_VM') {
-            console.error(`[UserApi] [Stack] ${fullApiInfo.name}:`, error.stack)
+            customSourceLog.error(`[UserApi] [Stack] ${fullApiInfo.name}:`, error.stack)
         }
         // 返回详细错误信息而不是直接抛出
         const isRequireUnsafe = !apiInfo.allowUnsafeVM && (error.message === 'REQUIRE_UNSAFE_VM' || error.message.includes('初始化超时') || error.message.includes('timeout'))
         return { success: false, apiInstance: null, error: error.message, requireUnsafe: isRequireUnsafe }
     }
-}
-
-// 调用自定义源的 getMusicUrl
-// ============================================================继续
-
-// 原生音源兜底：当所有第三方自定义音源都失败时，直连各平台官方接口
-// 取播放链接（绕过失效的社区音源后端）。见 src/modules/utils/musicSdk/nativeMusicUrl.js
-// 注意：当前代理为 HTTP 正向代理（不支持 HTTPS CONNECT），原生实现只用 http://。
-// ============================================================
-async function tryNativeMusicUrl(source: string, songInfo: any, quality: string, onProgress?: any) {
-    try {
-        const native = await import('../modules/utils/musicSdk/nativeMusicUrl.js')
-        const url = await native.getNativeMusicUrl(source, songInfo, quality)
-        if (url) {
-            console.log(`[Native] ✓ ${source} 原生兜底成功返回链接`)
-            if (onProgress) await onProgress({ name: `原生-${source}`, status: 'success', message: '原生兜底返回链接' })
-            return { url, type: quality, sourceName: `原生-${source}`, attempts: [{ name: `原生-${source}`, status: 'success', message: '原生兜底' }] }
-        }
-    } catch (e: any) {
-        console.warn(`[Native] ${source} 原生兜底失败: ${e?.message}`)
-    }
-    return null
 }
 
 export async function callUserApiGetMusicUrl(
@@ -602,9 +581,6 @@ export async function callUserApiGetMusicUrl(
     supportedCount = candidates.length
 
     if (supportedCount === 0) {
-        // 没有可用的自定义音源 -> 尝试原生兜底
-        const nativeResult = await tryNativeMusicUrl(source, normalizedSongInfo, quality, onProgress)
-        if (nativeResult) return nativeResult
         const errMsg = `未找到支持 ${source} 平台的自定义源，请在设置中添加或启用相关源`
         if (onProgress) await onProgress({ name: '系统', status: 'fail', message: errMsg })
         throw new Error(errMsg)
@@ -622,7 +598,7 @@ export async function callUserApiGetMusicUrl(
 
         for (let i = 0; i < maxRetries; i++) {
             try {
-                console.log(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (第 ${i + 1}/${maxRetries} 次, Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (第 ${i + 1}/${maxRetries} 次, Owner: ${api.info.owner})`)
 
                 const url = await api.callRequest('musicUrl', source, {
                     musicInfo: normalizedSongInfo,
@@ -630,13 +606,13 @@ export async function callUserApiGetMusicUrl(
                     type: quality
                 })
 
-                console.log(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
                 const att = { name: api.info.name, status: 'success', message: `第 ${i + 1} 次尝试成功` }
                 attempts.push(att)
                 if (onProgress) await onProgress(att)
                 return { url, type: quality, sourceName: api.info.name, attempts }
             } catch (error: any) {
-                console.error(`[UserApi] ${api.info.name} 失败 (第 ${i + 1}/${maxRetries} 次):`, `音源日志：${error.message}`)
+                customSourceLog.error(`[UserApi] ${api.info.name} 失败 (第 ${i + 1}/${maxRetries} 次):`, `音源日志：${error.message}`)
                 lastError = error
                 const att = { name: api.info.name, status: 'fail', message: `第 ${i + 1} 次尝试失败,音源日志：${error.message}` }
                 attempts.push(att)
@@ -651,7 +627,7 @@ export async function callUserApiGetMusicUrl(
         // 多个源，轮流尝试
         for (const api of candidates) {
             try {
-                console.log(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (Owner: ${api.info.owner})`)
 
                 const url = await api.callRequest('musicUrl', source, {
                     musicInfo: normalizedSongInfo,
@@ -659,13 +635,13 @@ export async function callUserApiGetMusicUrl(
                     type: quality
                 })
 
-                console.log(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
                 const att = { name: api.info.name, status: 'success' }
                 attempts.push(att)
                 if (onProgress) await onProgress(att)
                 return { url, type: quality, sourceName: api.info.name, attempts }
             } catch (error: any) {
-                console.error(`[UserApi] ${api.info.name} 失败:`, `音源日志：${error.message}`)
+                customSourceLog.error(`[UserApi] ${api.info.name} 失败:`, `音源日志：${error.message}`)
                 lastError = error
                 const att = { name: api.info.name, status: 'fail', message: `音源日志：${error.message}` }
                 attempts.push(att)
@@ -678,10 +654,6 @@ export async function callUserApiGetMusicUrl(
     const detailMsg = supportedCount === 1
         ? `自定义源 [${candidates[0].info.name}] 解析失败`
         : `已尝试了 ${supportedCount} 个支持 ${source} 平台的源，但全部解析失败`
-
-    // 所有自定义音源失败 -> 尝试原生兜底
-    const nativeResult = await tryNativeMusicUrl(source, normalizedSongInfo, quality, onProgress)
-    if (nativeResult) return nativeResult
 
     const finalError: any = new Error(`${detailMsg} (音源日志: ${lastError?.message})`)
     finalError.attempts = attempts
@@ -884,7 +856,7 @@ export async function initUserApis(targetUser?: string) {
     }
 
     if (targetUser) {
-        console.log(`[UserApi] 重新加载用户源: ${targetUser}`)
+        customSourceLog.info(`[UserApi] 重新加载用户源: ${targetUser}`)
         // 清理该用户的旧源和状态
         for (const [key, api] of loadedApis.entries()) {
             if (api.info.owner === targetUser) {
@@ -934,8 +906,8 @@ export async function initUserApis(targetUser?: string) {
         }
     }
 
-    console.log(`[UserApi] 本次加载: ${stats.loadedCount} 个源`)
-    console.log(`[UserApi] 当前总计: ${loadedApis.size} 个源`)
+    customSourceLog.info(`[UserApi] 本次加载: ${stats.loadedCount} 个源`)
+    customSourceLog.info(`[UserApi] 当前总计: ${loadedApis.size} 个源`)
     console.log(`[UserApi] ========================================`)
 }
 

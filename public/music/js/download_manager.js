@@ -152,14 +152,9 @@ class DownloadManager {
                     id: task.id,
                     songInfo: this.getSongInfoForServer(task.song),
                     quality: task.quality,
-                    enableOnlyDownloadMode: window.settings?.enableOnlyDownloadMode || false,
-                    cacheLyric: window.settings?.enableServerLyricCache !== false,
                     embedLyric: !!(window.settings?.embedLyricToFile ?? true)
                 }))
             };
-            if (headers['x-frontend-auth'] && window.settings?.serverCacheNamingPattern) {
-                payload.namingPattern = window.settings.serverCacheNamingPattern;
-            }
             await this.requestServerQueue('/api/music/cache/queue', payload);
             tasks.forEach(task => {
                 task.serverManaged = true;
@@ -830,13 +825,8 @@ class DownloadManager {
                 requestedSource,
                 downloadSource: result.downloadSource || resolvedSong.source,
                 sourceName: result.sourceName || '',
-                enableOnlyDownloadMode: window.settings?.enableOnlyDownloadMode || false,
-                cacheLyric: window.settings?.enableServerLyricCache !== false,
                 embedLyric: !!(window.settings?.embedLyricToFile ?? true)
             };
-            if (window.settings?.serverCacheNamingPattern && headers['x-frontend-auth']) {
-                payload.namingPattern = window.settings.serverCacheNamingPattern;
-            }
 
             const res = await fetch('/api/music/cache/download', {
                 method: 'POST',

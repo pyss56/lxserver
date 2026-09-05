@@ -63,6 +63,11 @@ const config: LX.Config = {
   'singer.sourcePriority': ['tx', 'wy'], // 歌手信息源优先级
   'artist.maxFetchPages': 20, // 歌手歌曲最大抓取页数
   'cache.namingPattern': 'simple', // 缓存命名规则
+  'cache.location': 'root', // 缓存基础存储位置 root | data | library
+  'saveCacheToLibrary': true, // 流缓存落入共享音乐库 (/music)
+  'saveDownloadToLibrary': true, // 下载落入共享音乐库 (/music)
+  'enableOnlyDownloadMode': false, // 仅下载模式(下载到库，不写独立缓存目录)
+  'enableServerLyricCache': true, // 服务端歌词缓存
   'system.allowUnsafeVM': false, // 是否允许运行 VM 模式自定义源脚本
 }
 

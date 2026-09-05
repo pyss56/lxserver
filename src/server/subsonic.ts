@@ -101,19 +101,26 @@ class SubsonicHandler {
             openSubsonic: true,
         }
 
+        let body: string
         if (format === 'json') {
+            body = JSON.stringify({ 'subsonic-response': { ...base, ...data } })
             res.setHeader('Content-Type', 'application/json; charset=utf-8')
-            res.end(JSON.stringify({ 'subsonic-response': { ...base, ...data } }))
         } else {
-            res.setHeader('Content-Type', 'text/xml; charset=utf-8')
             let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
             xml += `<subsonic-response xmlns="http://subsonic.org/restapi"`
             xml += ` status="${base.status}" version="${base.version}"`
             xml += ` type="${base.type}" serverVersion="${base.serverVersion}" openSubsonic="true">\n`
             xml += this.toXml(data)
             xml += '</subsonic-response>'
-            res.end(xml)
+            body = xml
+            res.setHeader('Content-Type', 'text/xml; charset=utf-8')
         }
+
+        if (global.lx.config['subsonic.enableDebug']) {
+            const preview = body.length > 4000 ? body.slice(0, 4000) + `…(truncated, total ${body.length} bytes)` : body
+            console.log(`[Subsonic Raw-Out] 200 (${format}) ${preview}`)
+        }
+        res.end(body)
     }
 
     /** XML 渲染（仅 XML 路径使用）*/
@@ -166,9 +173,9 @@ class SubsonicHandler {
     }
 
     private sendError(res: http.ServerResponse, code: number, message: string, format: string) {
+        let body: string
         if (format === 'json') {
-            res.setHeader('Content-Type', 'application/json; charset=utf-8')
-            res.end(JSON.stringify({
+            body = JSON.stringify({
                 'subsonic-response': {
                     status: 'failed',
                     version: this.VERSION,
@@ -177,16 +184,22 @@ class SubsonicHandler {
                     openSubsonic: true,
                     error: { code, message },
                 },
-            }))
+            })
+            res.setHeader('Content-Type', 'application/json; charset=utf-8')
         } else {
-            res.setHeader('Content-Type', 'text/xml; charset=utf-8')
-            res.end(
+            body =
                 `<?xml version="1.0" encoding="UTF-8"?>\n` +
                 `<subsonic-response xmlns="http://subsonic.org/restapi" status="failed" version="${this.VERSION}"` +
                 ` type="lxserver" serverVersion="${this.SERVER_VERSION}" openSubsonic="true">` +
-                `<error code="${code}" message="${this.escapeXml(message)}"/></subsonic-response>`,
-            )
+                `<error code="${code}" message="${this.escapeXml(message)}"/></subsonic-response>`
+            res.setHeader('Content-Type', 'text/xml; charset=utf-8')
         }
+
+        if (global.lx.config['subsonic.enableDebug']) {
+            const preview = body.length > 4000 ? body.slice(0, 4000) + `…(truncated, total ${body.length} bytes)` : body
+            console.log(`[Subsonic Raw-Out] 200 (${format}) error code=${code} ${preview}`)
+        }
+        res.end(body)
     }
 
     private escapeXml(str: string): string {
@@ -241,7 +254,13 @@ class SubsonicHandler {
         if (logTitle) logDetails += ` title="${logTitle}"`
 
         if (global.lx.config['subsonic.enableDebug']) {
-            console.log(`[Subsonic Debug] ${req.method} /${method} (${format}) ${logDetails}`)
+            // 原始入站报文：完整 URL(含 query，认证字段 p/t/s 脱敏) + 请求头 + 全部 query 参数
+            const rawUrl = (req.url || '').replace(/(?<=[?&](?:p|t|s)=)[^&]*/g, '***')
+            const maskedQuery = urlObj.searchParams.toString().replace(/(?<=[?&](?:p|t|s)=)[^&]*/g, '***')
+            console.log(`[Subsonic Debug] IN ${req.method} /${method} (${format}) ${logDetails}`)
+            console.log(`[Subsonic Raw-In] ${req.method} ${rawUrl}`)
+            console.log(`  Headers=${JSON.stringify(req.headers)}`)
+            console.log(`  Params=${maskedQuery}`)
         }
 
         try {
@@ -474,6 +493,12 @@ class SubsonicHandler {
         const singer = music.singer || 'Unknown Artist'
         const source = music.source
 
+        // [双向桥接] 缓存已下发给客户端的歌曲，使客户端 star 时能直接命中，
+        // 无需依赖 listData（歌曲可能来自媒体库/搜索而非用户列表）也无需联网取回
+        if (id && (music as any).name) {
+            this.onlineSongCache.set(id, music)
+        }
+
         // [优化] 深度提取专辑信息：兼容 SDK 原始对象结构
         const albumName = meta.albumName || (music as any).albumName || (music as any).album?.name || 'Unknown Album'
         // 针对 tx 平台优先使用 albumMid (00...) 构造 alb_ ID，因为封面构造依赖它
@@ -697,6 +722,27 @@ class SubsonicHandler {
             console.warn(`[Subsonic] resolveMusicById ${id} 失败:`, (e as Error).message)
             return null
         }
+    }
+
+    /**
+     * 统一元数据解析原语（所有入口共用）：
+     *   1) 本地列表 / 内存缓存（findMusicById 内含 onlineSongCache 命中）
+     *   2) 未命中则按 id 从音源回源（resolveMusicById）
+     * 命中即回写 onlineSongCache，保证 getSong / getCoverArt / getLyrics / star / stream 行为一致。
+     * 返回 { music, listId }（回源取回时 listId='online'）；全未命中返回 null。
+     */
+    private async resolveSongMeta(username: string, id: string): Promise<{ music: LX.Music.MusicInfo, listId: string } | null> {
+        const found = await this.findMusicById(username, id)
+        if (found) {
+            this.cacheOnlineSong(found.music)
+            return found
+        }
+        const resolved = await this.resolveMusicById(id)
+        if (resolved) {
+            this.cacheOnlineSong(resolved)
+            return { music: resolved, listId: 'online' }
+        }
+        return null
     }
 
     // ─────────────────────────────────────────────
@@ -1203,12 +1249,12 @@ class SubsonicHandler {
         let music: LX.Music.MusicInfo | null = null
         let listId = 'online'
 
-        const found = await this.findMusicById(username, id)
-        if (found) {
-            music = found.music
-            listId = found.listId
+        // 统一解析：本地列表 / 内存缓存 → 失败再按 id 回源；回源仍失败才退化为用 id 当歌名
+        const hit = await this.resolveSongMeta(username, id)
+        if (hit) {
+            music = hit.music
+            listId = hit.listId
         } else if (id.includes('_')) {
-            // 在线歌曲 ID 动态元数据兜底 (处理 wy_1378492134, tx_... 等客户端请求非本地库歌曲)
             const parts = id.split('_')
             const source = parts[0]
             const songmid = parts.slice(1).join('_')
@@ -2129,32 +2175,20 @@ class SubsonicHandler {
             }
             // 其余按歌曲 id 处理
             try {
-                let found = await this.findMusicById(username, id)
-                if (!found) {
-                    // 本地/歌单/缓存都找不到 → 尝试按 id 从源取回，自动加入收藏
-                    const resolved = await this.resolveMusicById(id)
-                    if (!resolved) {
-                        console.warn(`[Subsonic] ${action} 歌曲 ${id} 跳过：无法解析该歌曲(不在 收藏/默认/歌单/本地库/搜索缓存 中，且源取回失败)，未做任何改动 (user=${username})`)
-                        continue
-                    }
-                    if (isStar) {
-                        await userSpace.listManage.listDataManage.listMusicAdd('love', [resolved], location)
-                        debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已从源取回并加入我的收藏(love) 《${resolved.name}》(user=${username})`)
-                    } else {
-                        await userSpace.listManage.listDataManage.listMusicRemove('love', [resolved.id])
-                        debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已从我的收藏(love) 移出 《${resolved.name}》(user=${username})`)
-                    }
-                    this.cacheOnlineSong(resolved)
-                    loveChanged = true
+                const hit = await this.resolveSongMeta(username, id)
+                const resolved = hit?.music || null
+                if (!resolved) {
+                    console.warn(`[Subsonic] ${action} 歌曲 ${id} 跳过：findMusicById 未命中 且 resolveMusicById 失败，未做任何改动 (user=${username})`)
                     continue
                 }
                 if (isStar) {
-                    await userSpace.listManage.listDataManage.listMusicAdd('love', [found.music], location)
-                    debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已加入我的收藏(love) 《${found.music.name}》(user=${username})`)
+                    await userSpace.listManage.listDataManage.listMusicAdd('love', [resolved], location)
                 } else {
-                    await userSpace.listManage.listDataManage.listMusicRemove('love', [found.music.id])
-                    debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> 已移出我的收藏(love) 《${found.music.name}》(user=${username})`)
+                    await userSpace.listManage.listDataManage.listMusicRemove('love', [resolved.id])
                 }
+                const fromSource = hit!.listId === 'online'
+                debugLog(`[Subsonic Debug] ${action} 歌曲 ${id} -> ${isStar ? '已加入' : '已移出'}我的收藏(love) 《${resolved.name}》${fromSource ? ' (从源取回)' : ''}(user=${username})`)
+                this.cacheOnlineSong(resolved)
                 loveChanged = true
             } catch (e) {
                 console.error(`[Subsonic] ${action} song error (${id}):`, e)
@@ -2427,7 +2461,8 @@ class SubsonicHandler {
 
                     if (result && result.url) {
                         // console.log(`[Subsonic] Radio ${id} resolved URL: ${result.url.slice(0, 50)}...`)
-                        res.writeHead(302, { Location: result.url })
+                        // 通过服务端代理返回音频，避免裸 http 重定向在 HTTPS 环境下被 mixed content 拦截
+                        res.writeHead(302, { Location: '/api/music/download?url=' + encodeURIComponent(result.url) + '&inline=1' })
                         return res.end()
                     } else {
                         console.error(`[Subsonic] Radio ${id} failed to resolve music URL`)
@@ -2442,16 +2477,41 @@ class SubsonicHandler {
             let musicInfo: any = found?.music || { source, songmid, id, meta: { songId: songmid } }
 
             let hash = musicInfo.hash || musicInfo.meta?.hash || ''
-            if (source === 'kg' && !hash) {
+            if (source === 'kg' && (!hash || !musicInfo.name)) {
                 try {
-                    const title = musicInfo.name || params.get('title') || params.get('name') || songmid
-                    const searchRes = await musicSdk.kg.musicSearch.search(title, 1, 5)
-                    const match = searchRes?.list?.find((item: any) => String(item.songmid || item.id || item.Audioid) === songmid) || searchRes?.list?.[0]
-                    if (match) {
-                        hash = match.hash || match.meta?.hash || match.types?.[0]?.hash || ''
+                    // 客户端通常只给 kg_<audio_id>（无歌名/歌手/哈希）。
+                    // 优先用 audio_id 回源取详情（kgGetMusicInfo 内部已支持 audio_id 查询 album_audio/audio），
+                    // 一次性补全 hash / 歌名 / 歌手 / 专辑 / 封面，供后续 getSong / star 命中。
+                    const resolved = await this.resolveMusicById(id)
+                    if (resolved) {
+                        const r: any = resolved
+                        musicInfo = {
+                            ...musicInfo,
+                            ...resolved,
+                            id,
+                            source,
+                            songmid: r.songmid || songmid,
+                        }
+                        hash = r.hash || hash
+                        if ((global.lx.config as Record<string, any>)['subsonic.enableDebug']) {
+                            console.log(`[Subsonic Debug] kg 播放回源补全元数据成功 《${resolved.name}》 - ${resolved.singer}`)
+                        }
+                    } else {
+                        // 回源失败兜底：按 title 搜索（title 通常也是空的，仅作尽力补全哈希）
+                        const title = musicInfo.name || params.get('title') || params.get('name') || songmid
+                        const searchRes = await musicSdk.kg.musicSearch.search(title, 1, 5)
+                        const exact = searchRes?.list?.find((item: any) => String(item.songmid || item.id || item.Audioid) === songmid)
+                        const match = exact || searchRes?.list?.[0]
+                        if (match) {
+                            hash = match.hash || match.meta?.hash || match.types?.[0]?.hash || hash
+                            if (exact) {
+                                if (!musicInfo.name && match.name) musicInfo.name = match.name
+                                if (!musicInfo.singer && match.singer) musicInfo.singer = match.singer
+                            }
+                        }
                     }
                 } catch (e) {
-                    console.error('[Subsonic] Auto-resolve kg hash for stream failed:', e)
+                    console.error('[Subsonic] Auto-resolve kg music info for stream failed:', e)
                 }
             }
 
@@ -2468,6 +2528,19 @@ class SubsonicHandler {
                 }
             }
 
+            // [上行暂存] 播放即存元数据：把本次取流的歌曲写入 onlineSongCache，
+            // 使之后 star（仅带 id）能在 findMusicById 直接命中，无需回源查 kg。
+            // 客户端 stream 参数通常带 title/artist，用来补全歌名/歌手。
+            if (!musicInfo.name) {
+                const t = params.get('title') || params.get('name')
+                if (t) musicInfo.name = t
+            }
+            if (!musicInfo.singer) {
+                const a = params.get('artist')
+                if (a) musicInfo.singer = a
+            }
+            this.cacheOnlineSong(musicInfo)
+
             const result = await callUserApiGetMusicUrl(source as any, musicInfo as any, quality, username)
 
             if (result && result.url) {
@@ -2477,22 +2550,30 @@ class SubsonicHandler {
                   setImmediate(() => {
                     const cacheUsername = (!username || username === 'default') ? '_open' : username
                     try {
-                      const cached = fileCache.checkCache({
-                        source, songmid, songId: musicInfo.meta?.songId, name: musicInfo.name, singer: musicInfo.singer, quality, exactQuality: true,
-                      } as any, cacheUsername)
-                      if (!cached.exists) {
+                      const ev = fileCache.evaluateCacheState({
+                        source, songmid, songId: musicInfo.meta?.songId, name: musicInfo.name, singer: musicInfo.singer, quality,
+                      } as any, cacheUsername, { qualityUpgrade: true, integrity: true })
+                      if (!ev.exists || ev.shouldReplace) {
+                        if (ev.shouldReplace && (global.lx.config as Record<string, any>)['subsonic.enableDebug']) {
+                          console.log(`[Subsonic Debug] cache replace -> name=${musicInfo.name} reasons=${JSON.stringify(ev.reasons)} oldQuality=${ev.cached?.quality} newQuality=${quality}`)
+                        }
                         void fileCache.downloadAndCache(musicInfo, result.url, quality, cacheUsername, undefined, false, true, true, {
                           requestedSource: source,
                           downloadSource: fileCache.detectDownloadSource(result.url, source),
                           sourceName: (result as any).sourceName,
                         })
-                          .then(() => console.log(`[Subsonic] Auto-cached on play: ${musicInfo.name} (${source})`))
+                          .then(() => console.log(`[Subsonic] Auto-cached on play: ${musicInfo.name} (${(result as any).sourceName || source})`))
                           .catch((err: any) => { if (err?.message !== 'Aborted') console.error(`[Subsonic] Auto-cache on play failed (${musicInfo.name}):`, err) })
                       }
                     } catch (e) { console.warn('[Subsonic] auto-cache check error:', e) }
                   })
                 }
-                res.writeHead(302, { Location: result.url })
+                if ((global.lx.config as Record<string, any>)['subsonic.enableDebug']) {
+                  console.log(`[Subsonic Debug] stream -> source=${source} sourceName=${(result as any).sourceName || '-'} name=${musicInfo.name}`)
+                }
+                // 通过服务端代理返回音频，避免裸 http 重定向在 HTTPS 环境下被 mixed content 拦截
+                console.log(`[Subsonic Stream] 服务器中转音频：源地址=${String(result.url).slice(0, 100)} (客户端只拿到 9527 的 /api/music/download，不会得到此直链)`)
+                res.writeHead(302, { Location: '/api/music/download?url=' + encodeURIComponent(result.url) + '&inline=1' })
                 res.end()
             } else {
                 return this.sendError(res, 0, 'Could not resolve music URL', format)
@@ -2589,7 +2670,7 @@ class SubsonicHandler {
         }
 
         // 2. 尝试从本地歌单库中查找
-        let found = await this.findMusicById(username, id).catch(() => null)
+        let found = await this.resolveSongMeta(username, id).catch(() => null)
 
         // [新增] 如果普通歌单没找到，去收藏专辑里找这首歌
         if (!found && id.includes('_')) {
@@ -2618,10 +2699,17 @@ class SubsonicHandler {
             const realId = parts.slice(2).join('_')
             // console.log(`[CoverArt] Album Route Parse: source=${source}, realId=${realId}`)
             if (musicSdk[source]?.getPic) {
-                const pic = await musicSdk[source].getPic({ source, albumId: realId, albumMid: realId } as any)
-                if (pic && typeof pic === 'string') {
-                    // console.log(`[CoverArt] ✓ SDK Album Pic Success: ${pic}`)
-                    return this.proxyCoverImage(res, pic)
+                try {
+                    const pic = await Promise.race([
+                        musicSdk[source].getPic({ source, albumId: realId, albumMid: realId } as any),
+                        new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+                    ])
+                    if (pic && typeof pic === 'string') {
+                        // console.log(`[CoverArt] ✓ SDK Album Pic Success: ${pic}`)
+                        return this.proxyCoverImage(res, pic)
+                    }
+                } catch (e: any) {
+                    console.error(`[CoverArt] Album SDK getPic error (source=${source}):`, e?.message)
                 }
             }
         } else if (id.startsWith('art_')) {
@@ -2923,7 +3011,7 @@ class SubsonicHandler {
 
         try {
             // 尝试查找歌曲详情以丰富歌词请求元数据 (KG/MG 特别需要)
-            const found = await this.findMusicById(username, id)
+            const found = await this.resolveSongMeta(username, id)
             const musicMeta = found?.music || {
                 id,
                 source,

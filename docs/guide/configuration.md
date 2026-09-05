@@ -14,6 +14,10 @@ LX Music Sync Server 构建了统一的基础模型骨架（位于 `src/defaultC
 4. **全局默认入口配置 (Global Config.js)**：项目根目录下的 `config.js`。
 5. **系统级默认常量 (Default Consts)**：`src/defaultConfig.ts`。
 
+> **自定义配置**：默认配置已内置（基于 `config.example.js`，干净、无本机绝对路径）。要覆盖默认值，任选其一：
+> - **容器部署**：设置环境变量 `CONFIG_PATH` 指向你的 `.js` / `.json` 配置，或在 `docker-compose.yml` 中将宿主机配置文件挂载到 `/server/config.js`（支持 `fs.watch` 热重载，修改后无需重启）。
+> - **本地运行**：直接 `cp config.example.js config.js` 后编辑（`config.js` 已被 `.gitignore` 忽略，不会进入版本库）。
+
 ---
 
 ## 核心配置参数字典
@@ -81,6 +85,33 @@ LX Music Sync Server 构建了统一的基础模型骨架（位于 `src/defaultC
 | 环境变量映射键 (ENV) | 系统默认值 | 数据类型 | 作用域与适用场景 |
 | :--- | :--- | :--- | :--- |
 | `LIST_ADD_MUSIC_LOCATION_TYPE` | `top` | String | **新歌添加位置**。可选值为 `top`（添加到列表顶部）或 `bottom`（添加到列表底部）。 |
+
+### 六、 缓存与音乐库存储策略（服务端配置）
+
+以下开关决定服务端**是否把流缓存 / 下载 / 歌词落盘**，以及落到哪个位置。它们属于**服务端运维配置**，不再于 Web 播放器设置面板中暴露，统一由部署者通过配置文件设定。
+
+> 配置文件位置：**项目根目录下的 `config.js`**（或环境变量 `CONFIG_PATH` 指向的 `.js` / `.json` 文件）。文件中的键名直接覆盖 `src/defaultConfig.ts` 的默认值，例如：
+> ```js
+> module.exports = {
+>   'cache.location': 'root',          // 缓存基础存储位置: root | data | library
+>   'cache.namingPattern': 'simple',   // 文件命名规则: simple | standard
+>   'saveCacheToLibrary': true,        // 流缓存是否落入共享音乐库 /music
+>   'saveDownloadToLibrary': true,     // 下载是否落入共享音乐库 /music
+>   'enableOnlyDownloadMode': false,   // 仅下载模式(下载到库，不写独立缓存目录)
+>   'enableServerLyricCache': true,    // 是否缓存歌词到服务端
+> }
+> ```
+
+| 配置键 (config.js) | 系统默认值 | 数据类型 | 作用域与适用场景 |
+| :--- | :--- | :--- | :--- |
+| `cache.location` | `root` | String | **缓存基础存储位置**。`root`=运行目录；`data`=`DATA_PATH` 目录（可配合 WebDAV 同步）；`library`=直接写入共享音乐库 `/music`。 |
+| `cache.namingPattern` | `simple` | String | **缓存/库文件命名规则**。`simple`=`{歌名} - {歌手} - {音质} - {专辑}`；`standard`=`{歌名}_-_{歌手}_-_{音源}_-_{ID}_-_{音质}`（含 ID，天然唯一）。 |
+| `saveCacheToLibrary` | `true` | Boolean | **流缓存落入共享音乐库**。开启后代理缓存的歌曲直接写入 `/music`（共享、无用户子目录）；关闭则写入独立 `cache` 目录。 |
+| `saveDownloadToLibrary` | `true` | Boolean | **下载落入共享音乐库**。开启后下载的歌曲直接写入 `/music`；关闭则写入独立 `music` 目录。 |
+| `enableOnlyDownloadMode` | `false` | Boolean | **仅下载模式**。为 `true` 时所有保存动作以「下载」语义落盘（写入 `music` 类型目录）；为 `false` 时为「缓存」语义。 |
+| `enableServerLyricCache` | `true` | Boolean | **服务端歌词缓存**。开启后歌词随歌曲一并缓存到服务端，供后续离线/快速展示。 |
+
+**「直接入库」语义**：当 `saveCacheToLibrary` 与 `saveDownloadToLibrary` 同时为 `true` 时，缓存与下载都会直接落入共享音乐库 `/music`，即「播放即入库」。两者均关闭时，服务端不做任何本地落盘（纯代理流）。这些开关为**服务端统一策略**，对所有连接用户一致生效，不再按浏览器/用户分别控制。
 
 ### 七、 Subsonic 协议配置
 

@@ -107,3 +107,9 @@
 - 歌曲在 loveList / userList 中存的是完整 `MusicInfo`，移除/添加用 `findMusicById` 保证拿到的对象可被客户端消费（`stream`、`getCoverArt` 依赖其 `id`）。
 - 响应格式需同时兼容 `f=xml` 与 `f=json`（参考现有 `sendResponse` / `sendError` 用法）。
 - 分批落地，每批一个 commit，标题示例：`feat(subsonic): implement star/unstar to align with StreamMusic`。
+
+---
+
+## 后续待讨论项（待补充细节，后面再说）
+
+- [ ] **最近播放（Recently Played）**：跟踪 / 暴露用户「最近播放」列表，与 LX ↔ Subsonic 对齐（参考 loveList 桥接思路）。具体形态待定：服务端记录播放历史并持久化到 `userDir`，还是复用 LX 客户端已有的最近播放、在 Subsonic 侧以某端点（`getAlbumList2?type=recent` / `getPlayQueue` 语义扩展等）暴露。细节后续讨论。

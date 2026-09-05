@@ -14,6 +14,10 @@ The loading and merging of configurations follow the priority sequence from high
 4. **Global Default Entry Configuration (Global Config.js)**: The `config.js` file in the project's root directory.
 5. **System-level Default Constants (Default Consts)**: Defaults in `src/defaultConfig.ts`.
 
+> **Custom configuration**: A clean default config is built in (based on `config.example.js`, with no machine-specific paths). To override the defaults, choose one:
+> - **Container deployment**: set the `CONFIG_PATH` env var to your `.js` / `.json` config, or mount your config file to `/server/config.js` in `docker-compose.yml` (hot-reload via `fs.watch` is supported, no restart needed).
+> - **Local run**: `cp config.example.js config.js` and edit it (`config.js` is git-ignored and won't be committed).
+
 ---
 
 ## Core Configuration Parameter Dictionary
@@ -81,6 +85,33 @@ The underlying periodic polling asynchronous daemon of the service will only be 
 | Environment Variable Mapping Key (ENV) | System Default Value | Data Type | Scope and Applicable Scenarios |
 | :--- | :--- | :--- | :--- |
 | `LIST_ADD_MUSIC_LOCATION_TYPE` | `top` | String | **New song location**. `top` (add to the top) or `bottom` (add to the bottom). |
+
+### VI. Cache & Music Library Storage Policy (Server-side Config)
+
+The following switches control whether the server **persists stream cache / downloads / lyrics to disk**, and where they land. They are **server-side operational settings** and are no longer exposed in the Web player settings panel; they are configured by the deployer via the config file.
+
+> Config file location: **`config.js` at the project root** (or the `.js` / `.json` file pointed to by the `CONFIG_PATH` environment variable). Keys in this file directly override the defaults in `src/defaultConfig.ts`, e.g.:
+> ```js
+> module.exports = {
+>   'cache.location': 'root',          // base cache storage: root | data | library
+>   'cache.namingPattern': 'simple',   // file naming: simple | standard
+>   'saveCacheToLibrary': true,        // stream cache lands in shared library /music
+>   'saveDownloadToLibrary': true,     // downloads land in shared library /music
+>   'enableOnlyDownloadMode': false,   // download-only mode (to library, no separate cache dir)
+>   'enableServerLyricCache': true,     // cache lyrics on the server
+> }
+> ```
+
+| Config Key (config.js) | System Default | Data Type | Scope and Applicable Scenarios |
+| :--- | :--- | :--- | :--- |
+| `cache.location` | `root` | String | **Base cache storage location**. `root`=runtime directory; `data`=`DATA_PATH` directory (can be paired with WebDAV sync); `library`=write directly into the shared library `/music`. |
+| `cache.namingPattern` | `simple` | String | **Cache/library file naming rule**. `simple`=`{Name} - {Singer} - {Quality} - {Album}`; `standard`=`{Name}_-_{Singer}_-_{Source}_-_{ID}_-_{Quality}` (includes ID, naturally unique). |
+| `saveCacheToLibrary` | `true` | Boolean | **Stream cache lands in shared library**. When on, proxied cache songs are written directly into `/music` (shared, no per-user subfolder); when off, they go to a separate `cache` directory. |
+| `saveDownloadToLibrary` | `true` | Boolean | **Downloads land in shared library**. When on, downloaded songs are written into `/music`; when off, into a separate `music` directory. |
+| `enableOnlyDownloadMode` | `false` | Boolean | **Download-only mode**. When `true`, all save actions use "download" semantics (write to `music`-typed directory); when `false`, "cache" semantics. |
+| `enableServerLyricCache` | `true` | Boolean | **Server-side lyric cache**. When on, lyrics are cached on the server alongside songs for offline / fast display. |
+
+**"Direct to library" semantics**: when both `saveCacheToLibrary` and `saveDownloadToLibrary` are `true`, both cache and downloads land directly in the shared library `/music` — i.e. "play = into library". When both are off, the server performs no local persistence (pure proxy streaming). These switches are a **unified server-side policy** applied consistently to all connected users; they are no longer controlled per-browser / per-user.
 
 ### VII. Subsonic Protocol Configuration
 

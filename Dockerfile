@@ -14,7 +14,8 @@ RUN apk add --update \
   && npm install --ignore-scripts --no-audit --no-fund && npm run build \
   && rm -rf node_modules && npm install --omit=dev --no-audit --no-fund \
   && mkdir -p build-output \
-  && mv server node_modules config.js index.js package.json public -t build-output
+  && cp config.example.js build-output/config.js \
+  && mv server node_modules index.js package.json public -t build-output
 
 
 FROM base AS final
