@@ -327,7 +327,7 @@ Invoke-RestMethod "$b/orgs/pyss56/actions/secrets" -Headers $h
 
 ## 7. 另一条并行任务线：Subsonic 协议补齐
 
-详见 `TODO.md`（Subsonic 协议补齐未落地项）：
+详见 `TODO.md`（待讨论议题）：
 
 - 批 1-4 已完成并提交（`star`/`unstar`、`setRating`、播放列表写操作、`getIndexes`）
 - **批 5 未做**：空结构兜底 + `getScanStatus` 等
