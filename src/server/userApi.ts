@@ -2,6 +2,7 @@ import { VM } from 'vm2'
 import * as fs from 'fs'
 import * as path from 'path'
 
+import { customSourceLog } from '../utils/log4js'
 import needle from 'needle'
 import * as crypto from 'crypto'
 import * as zlib from 'zlib'
@@ -377,13 +378,13 @@ export async function loadUserApi(apiInfo: UserApiInfo): Promise<any> {
         }
 
         loadedApis.set(`${fullApiInfo.owner}_${apiInfo.id}`, apiInstance)
-        console.log(`[UserApi] ✓ 成功加载: ${fullApiInfo.name} v${fullApiInfo.version} (Owner: ${fullApiInfo.owner})`)
-        console.log(`[UserApi]   支持源: ${Object.keys(registeredSources).join(', ')}`)
+        customSourceLog.debug(`[UserApi] ✓ 成功加载: ${fullApiInfo.name} v${fullApiInfo.version} (Owner: ${fullApiInfo.owner})`)
+        customSourceLog.debug(`[UserApi]   支持源: ${Object.keys(registeredSources).join(', ')}`)
         return { success: true, apiInstance, error: null }
     } catch (error: any) {
-        console.error(`[UserApi] ✗ 加载失败 ${fullApiInfo.name}:`, error.message)
+        customSourceLog.error(`[UserApi] ✗ 加载失败 ${fullApiInfo.name}:`, error.message)
         if (error.stack && error.message !== 'REQUIRE_UNSAFE_VM') {
-            console.error(`[UserApi] [Stack] ${fullApiInfo.name}:`, error.stack)
+            customSourceLog.error(`[UserApi] [Stack] ${fullApiInfo.name}:`, error.stack)
         }
         // 返回详细错误信息而不是直接抛出
         const isRequireUnsafe = !apiInfo.allowUnsafeVM && (error.message === 'REQUIRE_UNSAFE_VM' || error.message.includes('初始化超时') || error.message.includes('timeout'))
@@ -391,7 +392,6 @@ export async function loadUserApi(apiInfo: UserApiInfo): Promise<any> {
     }
 }
 
-// 调用自定义源的 getMusicUrl
 export async function callUserApiGetMusicUrl(
     source: string,
     songInfo: any,
@@ -598,7 +598,7 @@ export async function callUserApiGetMusicUrl(
 
         for (let i = 0; i < maxRetries; i++) {
             try {
-                console.log(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (第 ${i + 1}/${maxRetries} 次, Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (第 ${i + 1}/${maxRetries} 次, Owner: ${api.info.owner})`)
 
                 const url = await api.callRequest('musicUrl', source, {
                     musicInfo: normalizedSongInfo,
@@ -606,13 +606,13 @@ export async function callUserApiGetMusicUrl(
                     type: quality
                 })
 
-                console.log(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
                 const att = { name: api.info.name, status: 'success', message: `第 ${i + 1} 次尝试成功` }
                 attempts.push(att)
                 if (onProgress) await onProgress(att)
                 return { url, type: quality, sourceName: api.info.name, attempts }
             } catch (error: any) {
-                console.error(`[UserApi] ${api.info.name} 失败 (第 ${i + 1}/${maxRetries} 次):`, `音源日志：${error.message}`)
+                customSourceLog.error(`[UserApi] ${api.info.name} 失败 (第 ${i + 1}/${maxRetries} 次):`, `音源日志：${error.message}`)
                 lastError = error
                 const att = { name: api.info.name, status: 'fail', message: `第 ${i + 1} 次尝试失败,音源日志：${error.message}` }
                 attempts.push(att)
@@ -627,7 +627,7 @@ export async function callUserApiGetMusicUrl(
         // 多个源，轮流尝试
         for (const api of candidates) {
             try {
-                console.log(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] 尝试 ${api.info.name} 获取 ${source} 音乐链接 (Owner: ${api.info.owner})`)
 
                 const url = await api.callRequest('musicUrl', source, {
                     musicInfo: normalizedSongInfo,
@@ -635,13 +635,13 @@ export async function callUserApiGetMusicUrl(
                     type: quality
                 })
 
-                console.log(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
+                customSourceLog.debug(`[UserApi] ✓ ${api.info.name} 成功返回链接 (Owner: ${api.info.owner})`)
                 const att = { name: api.info.name, status: 'success' }
                 attempts.push(att)
                 if (onProgress) await onProgress(att)
                 return { url, type: quality, sourceName: api.info.name, attempts }
             } catch (error: any) {
-                console.error(`[UserApi] ${api.info.name} 失败:`, `音源日志：${error.message}`)
+                customSourceLog.error(`[UserApi] ${api.info.name} 失败:`, `音源日志：${error.message}`)
                 lastError = error
                 const att = { name: api.info.name, status: 'fail', message: `音源日志：${error.message}` }
                 attempts.push(att)
@@ -705,7 +705,7 @@ async function loadSourcesFromDir(dirPath: string, owner: string, stats: { loade
                 const script = fs.readFileSync(scriptPath, 'utf-8')
                 const metadata = extractMetadata(script)
 
-                const result = await loadUserApi({
+                const loadTask = loadUserApi({
                     id: source.id,
                     name: metadata.name || source.name,
                     description: metadata.description || '',
@@ -718,6 +718,12 @@ async function loadSourcesFromDir(dirPath: string, owner: string, stats: { loade
                     allowUnsafeVM: source.allowUnsafeVM, // 传递不安全模式标志
                     owner: owner // 设置 owner
                 })
+                // [Timeout Guard] 防止单个音源脚本内部永久挂起（如顶层 await 永不 resolve）
+                // 冻死整个 initUserApis，导致所有自定义源不可用。超时后标记该源失败并继续下一个。
+                const loadTaskTimeout = new Promise<any>((_, reject) =>
+                    setTimeout(() => reject(new Error(`加载超时(脚本可能永久挂起)，已跳过: ${metadata.name || source.name}`)), 15000)
+                )
+                const result = await Promise.race([loadTask, loadTaskTimeout])
 
                 if (result.success) {
                     stats.loadedCount++
@@ -850,7 +856,7 @@ export async function initUserApis(targetUser?: string) {
     }
 
     if (targetUser) {
-        console.log(`[UserApi] 重新加载用户源: ${targetUser}`)
+        customSourceLog.info(`[UserApi] 重新加载用户源: ${targetUser}`)
         // 清理该用户的旧源和状态
         for (const [key, api] of loadedApis.entries()) {
             if (api.info.owner === targetUser) {
@@ -900,8 +906,8 @@ export async function initUserApis(targetUser?: string) {
         }
     }
 
-    console.log(`[UserApi] 本次加载: ${stats.loadedCount} 个源`)
-    console.log(`[UserApi] 当前总计: ${loadedApis.size} 个源`)
+    customSourceLog.info(`[UserApi] 本次加载: ${stats.loadedCount} 个源`)
+    customSourceLog.info(`[UserApi] 当前总计: ${loadedApis.size} 个源`)
     console.log(`[UserApi] ========================================`)
 }
 

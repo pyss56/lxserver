@@ -21,13 +21,13 @@ export default {
           resource: [
             {
               album_audio_id:
-                songInfo.songmid.length == 32 // 修复歌曲ID存储变更导致图片获取失败的问题
+                songInfo?.songmid && songInfo.songmid.length == 32 && songInfo.audioId // 修复歌曲ID存储变更导致图片获取失败的问题
                   ? songInfo.audioId.split('_')[0]
-                  : songInfo.songmid,
-              album_id: songInfo.albumId,
-              hash: songInfo.hash,
+                  : songInfo?.songmid,
+              album_id: songInfo?.albumId,
+              hash: songInfo?.hash,
               id: 0,
-              name: `${songInfo.singer} - ${songInfo.name}.mp3`,
+              name: `${songInfo?.singer || ''} - ${songInfo?.name || ''}.mp3`,
               type: 'audio',
             },
           ],
