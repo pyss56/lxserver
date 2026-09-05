@@ -392,6 +392,27 @@ export async function loadUserApi(apiInfo: UserApiInfo): Promise<any> {
 }
 
 // 调用自定义源的 getMusicUrl
+// ============================================================继续
+
+// 原生音源兜底：当所有第三方自定义音源都失败时，直连各平台官方接口
+// 取播放链接（绕过失效的社区音源后端）。见 src/modules/utils/musicSdk/nativeMusicUrl.js
+// 注意：当前代理为 HTTP 正向代理（不支持 HTTPS CONNECT），原生实现只用 http://。
+// ============================================================
+async function tryNativeMusicUrl(source: string, songInfo: any, quality: string, onProgress?: any) {
+    try {
+        const native = await import('../modules/utils/musicSdk/nativeMusicUrl.js')
+        const url = await native.getNativeMusicUrl(source, songInfo, quality)
+        if (url) {
+            console.log(`[Native] ✓ ${source} 原生兜底成功返回链接`)
+            if (onProgress) await onProgress({ name: `原生-${source}`, status: 'success', message: '原生兜底返回链接' })
+            return { url, type: quality, sourceName: `原生-${source}`, attempts: [{ name: `原生-${source}`, status: 'success', message: '原生兜底' }] }
+        }
+    } catch (e: any) {
+        console.warn(`[Native] ${source} 原生兜底失败: ${e?.message}`)
+    }
+    return null
+}
+
 export async function callUserApiGetMusicUrl(
     source: string,
     songInfo: any,
@@ -581,6 +602,9 @@ export async function callUserApiGetMusicUrl(
     supportedCount = candidates.length
 
     if (supportedCount === 0) {
+        // 没有可用的自定义音源 -> 尝试原生兜底
+        const nativeResult = await tryNativeMusicUrl(source, normalizedSongInfo, quality, onProgress)
+        if (nativeResult) return nativeResult
         const errMsg = `未找到支持 ${source} 平台的自定义源，请在设置中添加或启用相关源`
         if (onProgress) await onProgress({ name: '系统', status: 'fail', message: errMsg })
         throw new Error(errMsg)
@@ -655,6 +679,10 @@ export async function callUserApiGetMusicUrl(
         ? `自定义源 [${candidates[0].info.name}] 解析失败`
         : `已尝试了 ${supportedCount} 个支持 ${source} 平台的源，但全部解析失败`
 
+    // 所有自定义音源失败 -> 尝试原生兜底
+    const nativeResult = await tryNativeMusicUrl(source, normalizedSongInfo, quality, onProgress)
+    if (nativeResult) return nativeResult
+
     const finalError: any = new Error(`${detailMsg} (音源日志: ${lastError?.message})`)
     finalError.attempts = attempts
     throw finalError
@@ -705,7 +733,7 @@ async function loadSourcesFromDir(dirPath: string, owner: string, stats: { loade
                 const script = fs.readFileSync(scriptPath, 'utf-8')
                 const metadata = extractMetadata(script)
 
-                const result = await loadUserApi({
+                const loadTask = loadUserApi({
                     id: source.id,
                     name: metadata.name || source.name,
                     description: metadata.description || '',
@@ -718,6 +746,12 @@ async function loadSourcesFromDir(dirPath: string, owner: string, stats: { loade
                     allowUnsafeVM: source.allowUnsafeVM, // 传递不安全模式标志
                     owner: owner // 设置 owner
                 })
+                // [Timeout Guard] 防止单个音源脚本内部永久挂起（如顶层 await 永不 resolve）
+                // 冻死整个 initUserApis，导致所有自定义源不可用。超时后标记该源失败并继续下一个。
+                const loadTaskTimeout = new Promise<any>((_, reject) =>
+                    setTimeout(() => reject(new Error(`加载超时(脚本可能永久挂起)，已跳过: ${metadata.name || source.name}`)), 15000)
+                )
+                const result = await Promise.race([loadTask, loadTaskTimeout])
 
                 if (result.success) {
                     stats.loadedCount++

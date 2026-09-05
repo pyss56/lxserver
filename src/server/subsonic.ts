@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { URL } from 'url'
 import { getUserSpace, getUserDirname } from '@/user'
 import { callUserApiGetMusicUrl } from '@/server/userApi'
+import * as fileCache from './fileCache'
 import { getSingerPic, getSingerDetail, getSingerMid } from '@/server/utils/singer'
 import { fetchRecommendedAlbums } from '@/server/utils/recommendAlbums'
 import { fetchGenres, fetchRadios, fetchPlaylistsByGenre, fetchRadioSongs, fetchPlaylistSongs, fetchSongsByGenre } from '@/server/utils/discovery'
@@ -2470,6 +2471,27 @@ class SubsonicHandler {
             const result = await callUserApiGetMusicUrl(source as any, musicInfo as any, quality, username)
 
             if (result && result.url) {
+                // [Auto cache on play] 边播边存：返回 302 的同时，后台把歌曲下载进服务器缓存（不阻塞播放）
+                if ((global.lx.config as Record<string, any>)['subsonic.autoCacheOnPlay'] !== false) {
+                  // 用 setImmediate 把缓存下载完全推迟到 302 响应返回之后，确保不影响客户端播放推送
+                  setImmediate(() => {
+                    const cacheUsername = (!username || username === 'default') ? '_open' : username
+                    try {
+                      const cached = fileCache.checkCache({
+                        source, songmid, songId: musicInfo.meta?.songId, name: musicInfo.name, singer: musicInfo.singer, quality, exactQuality: true,
+                      } as any, cacheUsername)
+                      if (!cached.exists) {
+                        void fileCache.downloadAndCache(musicInfo, result.url, quality, cacheUsername, undefined, false, true, true, {
+                          requestedSource: source,
+                          downloadSource: fileCache.detectDownloadSource(result.url, source),
+                          sourceName: (result as any).sourceName,
+                        })
+                          .then(() => console.log(`[Subsonic] Auto-cached on play: ${musicInfo.name} (${source})`))
+                          .catch((err: any) => { if (err?.message !== 'Aborted') console.error(`[Subsonic] Auto-cache on play failed (${musicInfo.name}):`, err) })
+                      }
+                    } catch (e) { console.warn('[Subsonic] auto-cache check error:', e) }
+                  })
+                }
                 res.writeHead(302, { Location: result.url })
                 res.end()
             } else {

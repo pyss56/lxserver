@@ -231,6 +231,11 @@ declare namespace LX {
     'subsonic.lyricTranslation'?: boolean
 
     /**
+     * 播放时是否同步把歌曲下载到服务器缓存 (默认 true，设为 false 关闭"边播边存")
+     */
+    'subsonic.autoCacheOnPlay'?: boolean
+
+    /**
      * 歌手信息源优先级
      */
     'singer.sourcePriority': Array<'tx' | 'wy'>

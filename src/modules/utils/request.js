@@ -3,12 +3,14 @@ import { debugRequest } from './env'
 import { requestMsg } from './message'
 import { bHh } from './musicSdk/options'
 import { deflateRaw } from 'zlib'
-import * as tunnel from 'tunnel'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 
 
 const httpsRxp = /^https:/
 
-// Mock proxy config from global.lx.config if needed, or environment variables
+// Proxy agent: route music SDK HTTP through proxy.all (or HTTPS_PROXY env).
+// NOTE: previously used tunnel.httpsOverHttp, which fails against some forward
+// proxies (socket disconnected before TLS). https-proxy-agent works reliably.
 const getRequestAgent = async url => {
     const config = global.lx?.config || {}
     const proxyEnabled = config['proxy.all.enabled']
@@ -18,15 +20,7 @@ const getRequestAgent = async url => {
         try {
             const proxyUrl = new URL(proxyAddress)
             if (proxyUrl.protocol === 'http:' || proxyUrl.protocol === 'https:') {
-                const isHttps = httpsRxp.test(url)
-                const tunnelOptions = {
-                    proxy: {
-                        host: proxyUrl.hostname,
-                        port: proxyUrl.port,
-                        proxyAuth: proxyUrl.username ? `${proxyUrl.username}:${proxyUrl.password}` : undefined
-                    }
-                }
-                return (isHttps ? tunnel.httpsOverHttp : tunnel.httpOverHttp)(tunnelOptions)
+                return new HttpsProxyAgent(proxyAddress)
             } else if (proxyUrl.protocol.startsWith('socks')) {
                 const { SocksProxyAgent } = await import('socks-proxy-agent')
                 return new SocksProxyAgent(proxyAddress)
@@ -36,17 +30,10 @@ const getRequestAgent = async url => {
         }
     }
 
-    if (process.env.HTTPS_PROXY) {
+    const envProxy = process.env.HTTPS_PROXY || process.env.https_proxy
+    if (envProxy) {
         try {
-            const proxyUrl = new URL(process.env.HTTPS_PROXY)
-            const tunnelOptions = {
-                proxy: {
-                    host: proxyUrl.hostname,
-                    port: proxyUrl.port,
-                    proxyAuth: proxyUrl.username ? `${proxyUrl.username}:${proxyUrl.password}` : undefined
-                }
-            }
-            return (httpsRxp.test(url) ? tunnel.httpsOverHttp : tunnel.httpOverHttp)(tunnelOptions)
+            return new HttpsProxyAgent(envProxy)
         } catch (e) { }
     }
 
