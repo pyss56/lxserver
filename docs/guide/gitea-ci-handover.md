@@ -12,7 +12,7 @@
 | --- | --- |
 | Gitea 站点 | `http://10.3.3.15:3030`（v1.27.3，HTTP，**非 HTTPS**） |
 | 目标仓库 | `pyss56/lxserver`（**组织**，非用户） |
-| 代码 | 已推送 `gitea/main`，最新提交 `b8b99f6` |
+| 代码 | 已推送 `gitea/main`（含 Subsonic 协议对齐收尾与文档整合） |
 | CI 文件 | `.gitea/workflows/docker.yml`（Gitea 只读 `.gitea/workflows`，不会读 `.github/workflows`） |
 | Runner | `e1a8675ce5a1` online（可用）；`bee626241e9c` offline（废弃） |
 | 组织级 runner | **0 个**（当前是靠全局/用户级 runner 接任务的，见 §4.2） |
@@ -37,7 +37,7 @@ Gitea         : http://10.3.3.15:3030   (v1.27.3, HTTP)
 
 ```
 origin  https://github.com/pyss56/lxserver.git   （上游 GitHub，本地领先 17 个提交未推）
-gitea   http://10.3.3.15:3030/pyss56/lxserver.git （内网 CI 仓库，已同步至 b8b99f6）
+gitea   http://10.3.3.15:3030/pyss56/lxserver.git （内网 CI 仓库，已同步）
 ```
 
 ---
@@ -71,29 +71,12 @@ git push http://pavel:<GITEA_TOKEN>@10.3.3.15:3030/pyss56/lxserver.git main
 
 ## 3. 已完成的工作
 
-### 3.1 代码提交（本地 main 领先 origin/main 17 个，已全部推到 gitea）
+### 3.1 本阶段落地内容（均已推到 gitea）
 
-```
-df7b020  ci: checkout via git clone instead of actions/checkout
-4c94b9f  ci: point image registry at internal Gitea host
-1cd9d2d  ci: build and push image via Gitea Actions
-34d94dc  feat(subsonic): align favorites, ratings and playlists with StreamMusic
-```
-
-- `34d94dc`：Subsonic 协议对齐（批 1-4），详见 `DONE.md`（Subsonic 协议端点对齐）
-  - `star` / `unstar`（歌曲进 love 列表，专辑/歌手写 `subsonic-meta.json`）
-  - `setRating`（每用户持久化）
-  - `createPlaylist` / `deletePlaylist` / `updatePlaylist`（增补 `songIdToAdd` / `name`）
-  - `getIndexes`（根级索引，老客户端导航）
-  - `getStarred(2)` 语义修正为只返回收藏内容
-
-> 之后又落地了 Subsonic 协议对齐收尾与文档整合（详见 `DONE.md` / `TODO.md`）：
-> b8b99f6 docs: 合并 Subsonic 协议补齐计划到 TODO/DONE
-> 3175566 feat(subsonic): 统一解析原语 resolveSongMeta 与播放即缓存落盘
-> 3c64c1a feat(subsonic): 播放时边播边存 + 调试日志与设置开关
-> 18a2bcc / d942128 / b7b06c3 / 6d9b8a0：star 回源收藏、日志降级、await 修复等
-- `1cd9d2d` + `4c94b9f`：新增 `.gitea/workflows/docker.yml`
-- `df7b020`：checkout 方式改造（见 §4.1）
+- **CI 流水线**：新增 `.gitea/workflows/docker.yml`（纯 `docker` CLI，零第三方 action 依赖），checkout 改为从内网 Gitea 直接克隆；镜像推送到 Gitea 内置 registry。详见 §4.1。
+- **Subsonic 协议对齐（批 1-4，已实现）**：`star` / `unstar`、`setRating`、播放列表写操作（`createPlaylist` / `deletePlaylist` / `updatePlaylist`）、`getIndexes`、`getStarred(2)` 语义修正。详见 `DONE.md`。
+- **Subsonic 协议收尾（已实现）**：统一解析原语 `resolveSongMeta`（`getSong` / `getCoverArt` / `getLyrics` / `star` 收敛为单一入口）、`onlineSongCache` 元数据缓存、播放即缓存落盘（`fileCache`）。详见 `DONE.md`。
+- **文档整合**：Subsonic 协议补齐计划合并进 `TODO.md` / `DONE.md`，并整理本交接文档。
 
 ### 3.2 Gitea 侧
 
@@ -128,7 +111,7 @@ Get "https://github.com/actions/checkout/info/refs?service=git-upload-pack": une
 
 即 act_runner 需要去 github.com 拉取 `actions/checkout`，网络不通。
 
-**修复**：去掉 `uses: actions/checkout@v4`，改用 git 直接从内网 Gitea 克隆（提交 `df7b020`）：
+**修复**：去掉 `uses: actions/checkout@v4`，改用 git 直接从内网 Gitea 克隆：
 
 ```yaml
 - name: Checkout repository

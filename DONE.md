@@ -51,7 +51,7 @@
 
 ## 四、Subsonic 协议端点对齐（补齐进度）
 
-> 原 `docs/guide/subsonic-alignment-todo.md` 的「已实现」部分已合并至此。待办部分见 `TODO.md`。
+> Subsonic 协议端点对齐「已实现」部分如下；待办部分见 `TODO.md`。
 
 ### 当前已实现端点（对照音流对接文档）
 
