@@ -12,11 +12,11 @@
 | --- | --- |
 | Gitea 站点 | `http://10.3.3.15:3030`（v1.27.3，HTTP，**非 HTTPS**） |
 | 目标仓库 | `pyss56/lxserver`（**组织**，非用户） |
-| 代码 | 已推送 `main`，最新提交 `df7b020` |
+| 代码 | 已推送 `gitea/main`，最新提交 `b8b99f6` |
 | CI 文件 | `.gitea/workflows/docker.yml`（Gitea 只读 `.gitea/workflows`，不会读 `.github/workflows`） |
 | Runner | `e1a8675ce5a1` online（可用）；`bee626241e9c` offline（废弃） |
 | 组织级 runner | **0 个**（当前是靠全局/用户级 runner 接任务的，见 §4.2） |
-| 最近一次构建 | `run#5` = **failure**，卡在 step3「Log in to registry」（根因见 §4.5，**待服务器侧配置**） |
+| 最近一次构建 | `run#5` = **failure**，卡在 step3「Log in to registry」（根因见 §4.5；已采用方案 B：HTTPS 反代，待重新触发验证） |
 | 镜像产出 | 尚未成功，registry 里还没有镜像 |
 | Secrets | 组织级 `REGISTRY_USERNAME` / `REGISTRY_PASSWORD` 已配置 ✅ |
 
@@ -36,8 +36,8 @@ Gitea         : http://10.3.3.15:3030   (v1.27.3, HTTP)
 远端配置（本地 git）：
 
 ```
-origin  https://github.com/pyss56/lxserver.git   （上游 GitHub，当前落后 3 个提交未推）
-gitea   http://10.3.3.15:3030/pyss56/lxserver.git （内网 CI 仓库，已同步）
+origin  https://github.com/pyss56/lxserver.git   （上游 GitHub，本地领先 17 个提交未推）
+gitea   http://10.3.3.15:3030/pyss56/lxserver.git （内网 CI 仓库，已同步至 b8b99f6）
 ```
 
 ---
@@ -71,7 +71,7 @@ git push http://pavel:<GITEA_TOKEN>@10.3.3.15:3030/pyss56/lxserver.git main
 
 ## 3. 已完成的工作
 
-### 3.1 代码提交（本地 main，领先 origin/main 3 个）
+### 3.1 代码提交（本地 main 领先 origin/main 17 个，已全部推到 gitea）
 
 ```
 df7b020  ci: checkout via git clone instead of actions/checkout
@@ -86,6 +86,12 @@ df7b020  ci: checkout via git clone instead of actions/checkout
   - `createPlaylist` / `deletePlaylist` / `updatePlaylist`（增补 `songIdToAdd` / `name`）
   - `getIndexes`（根级索引，老客户端导航）
   - `getStarred(2)` 语义修正为只返回收藏内容
+
+> 之后又落地了 Subsonic 协议对齐收尾与文档整合（详见 `DONE.md` / `TODO.md`）：
+> b8b99f6 docs: 合并 Subsonic 协议补齐计划到 TODO/DONE
+> 3175566 feat(subsonic): 统一解析原语 resolveSongMeta 与播放即缓存落盘
+> 3c64c1a feat(subsonic): 播放时边播边存 + 调试日志与设置开关
+> 18a2bcc / d942128 / b7b06c3 / 6d9b8a0：star 回源收藏、日志降级、await 修复等
 - `1cd9d2d` + `4c94b9f`：新增 `.gitea/workflows/docker.yml`
 - `df7b020`：checkout 方式改造（见 §4.1）
 
@@ -157,11 +163,11 @@ GET /api/v1/orgs/pyss56/actions/runners  → total_count = 0
 `run#5` 的 step3 实际执行了 `docker login` 并收到 **daemon 层**的响应，说明
 runner 镜像内有 docker CLI，且能连到 daemon socket。无需再处理 docker 环境问题。
 
-### 4.4 未提交的 `config.js`
+### 4.4 `config.js` 已改为模板（工作区干净）
 
-本地 `config.js` 有未提交改动（删除了大量注释，并给 admin 注入了本机绝对路径
-`dataPath: C:\Users\...\lxserver\data\users\admin_21232f`）。
-**未提交**，因此不影响镜像构建（CI 用干净检出）。但工作区一直脏着，需决定是恢复还是单独处理。
+`config.js` 已重命名为 `config.example.js`（模板），仓库不再跟踪 `config.js`。
+本地运行从模板复制出 `config.js` 即可（未被 git 跟踪，不会进镜像、不会弄脏工作区）。
+当前工作区是干净的，CI 用干净检出，无需再处理未提交改动。
 
 ### 4.5 ❌ `run#5` 失败：docker 用 HTTPS 访问 HTTP registry（**当前唯一卡点**）
 
@@ -225,7 +231,7 @@ Invoke-RestMethod "http://10.3.3.15:3030/api/v1/repos/pyss56/lxserver/actions/wo
   -Method Post -Headers $h -Body (@{ref="main"} | ConvertTo-Json) -ContentType "application/json"
 ```
 
-**备选方案 B**：给 Gitea 加 HTTPS 反代（Nginx 443 → 127.0.0.1:3030），再把
+**备选方案（给 Gitea 加 HTTPS 反代）**：给 Gitea 加 HTTPS 反代（Nginx 443 → 127.0.0.1:3030），再把
 `.gitea/workflows/docker.yml` 的 `env.REGISTRY` 改成对应 https 域名。
 注意自签证书仍需 `insecure-registries` 或把 CA 加进宿主信任链。
 
@@ -272,7 +278,7 @@ docker run -d --name act_runner_pyss56 --restart unless-stopped \
   gitea/act_runner:latest
 ```
 
-### 5.3 若 docker 在 job 容器内不可用（§4.3）
+### 5.3 若 docker 在 job 容器内不可用（§4.3 已验证可用，作兜底）
 
 两个方向：
 
