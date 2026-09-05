@@ -34,4 +34,22 @@
 
 ---
 
+## 三、Subsonic 协议补齐（未落地项）
+
+
+### 批 5：扩展与兜底（可后续按需）
+- `getScanStatus`：改为读取真实扫描状态（至少返回 `scanning=false,count=0` 不报错）；`startScan` 可返回错误码 0 明确不支持。
+- 空结构兜底：对无实体功能的端点返回合法空结果而非 `Method not found`，避免客户端闪退：`getPodcasts`、`getNewestPodcasts`、`getShares`、`getBookmarks`、`getPlayQueue`、`getVideos`、`getChatMessages`、`getAvatar`、`jukeboxControl` 等。
+- 常用增强（对 Feishin / Symfonium 也有价值）：`getAlbumInfo(2)`、`savePlayQueue` / `getPlayQueue`（暂存每用户播放队列）、`createBookmark` / `deleteBookmark`。
+
+### 后续待讨论项
+- [ ] **最近播放（Recently Played）**：跟踪 / 暴露用户「最近播放」列表，与 LX ↔ Subsonic 对齐（参考 loveList 桥接思路）。具体形态待定：服务端记录播放历史并持久化到 `userDir`，还是复用 LX 客户端已有的最近播放、在 Subsonic 侧以某端点（`getAlbumList2?type=recent` / `getPlayQueue` 语义扩展等）暴露。细节后续讨论。
+
+### 设计决策（备忘）
+- 所有「收藏 / 评分 / 播放队列」类状态均按用户隔离，存放在用户数据目录，避免污染 `library` 库公共数据。
+- 歌曲在 loveList / userList 中存完整 `MusicInfo`，移除/添加用 `findMusicById` / `resolveSongMeta` 保证对象可被客户端消费（`stream`、`getCoverArt` 依赖其 `id`）。
+- 响应格式需同时兼容 `f=xml` 与 `f=json`（参考现有 `sendResponse` / `sendError` 用法）。
+
+---
+
 *整理时间：2026-09-05*

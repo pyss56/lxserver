@@ -49,4 +49,36 @@
 
 ---
 
+## 四、Subsonic 协议端点对齐（补齐进度）
+
+> 原 `docs/guide/subsonic-alignment-todo.md` 的「已实现」部分已合并至此。待办部分见 `TODO.md`。
+
+### 当前已实现端点（对照音流对接文档）
+
+| 端点 | 状态 | 备注 |
+| --- | --- | --- |
+| `ping` / `getLicense` | `[x]` | |
+| `getMusicFolders` / `getMusicDirectory` | `[x]` | |
+| `getGenres` / `getSongsByGenre(2)` | `[x]` | |
+| `getArtists` / `getArtistList` / `getArtist` | `[x]` | 音乐库歌手维度 |
+| `getAlbum` / `getAlbumList(2)` / `getSong` | `[x]` | `getSong` 走 `resolveSongMeta` 统一解析 |
+| `getSimilarSongs(2)` / `getTopSongs` / `getRandomSongs` | `[x]` | |
+| `getArtistInfo(2)` / `getLyrics` / `getLyricsBySongId` | `[x]` | `getLyrics` 走 `resolveSongMeta`，新增回源能力 |
+| `getStarred(2)` | `[x]` | 仅返回 love 列表 / 星标条目 |
+| `getPlaylists` / `getPlaylist` | `[x]` | love / default / userList 映射 |
+| `updatePlaylist` | `[x]` | `name` / `songIdToAdd` / 多 `songIndexToRemove` |
+| `stream` / `download` / `getCoverArt` | `[x]` | `getCoverArt` 走 `resolveSongMeta`；`stream` 播放即缓存落盘 |
+| `search` / `search2` / `search3` | `[x]` | |
+| `getUser` / `getInternetRadioStations` / `getOpenSubsonicExtensions` | `[x]` | |
+| `scrobble` / `getNowPlaying` / `getScanStatus` | `[~]` | 空实现占位，见 `TODO.md` 批 5 |
+
+### 补齐批次落地情况
+
+- **批 1 `star` / `unstar`**：已落地。歌曲收藏进 `loveList`；专辑/歌手星标写每用户 `subsonic-meta.json`（或 `subsonic-starred.json`）。`star` 歌曲定位现复用统一解析原语 `resolveSongMeta`（原 `findMusicById`）。
+- **批 2 `setRating`**：已落地。每用户持久化 0-5 评分（0 视为清除）。
+- **批 3 播放列表写操作**：已落地。`createPlaylist` / `deletePlaylist` 补齐，`updatePlaylist` 支持 `songIdToAdd` / `name` / `comment` / `public`。
+- **批 4 `getIndexes`**：已落地。复用 `getArtists` 聚合输出根级索引，兼容老客户端与音流首页导航。
+
+---
+
 *整理时间：2026-09-05*

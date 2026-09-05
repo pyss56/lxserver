@@ -80,7 +80,7 @@ df7b020  ci: checkout via git clone instead of actions/checkout
 34d94dc  feat(subsonic): align favorites, ratings and playlists with StreamMusic
 ```
 
-- `34d94dc`：Subsonic 协议对齐（批 1-4），详见 `docs/guide/subsonic-alignment-todo.md`
+- `34d94dc`：Subsonic 协议对齐（批 1-4），详见 `DONE.md`（Subsonic 协议端点对齐）
   - `star` / `unstar`（歌曲进 love 列表，专辑/歌手写 `subsonic-meta.json`）
   - `setRating`（每用户持久化）
   - `createPlaylist` / `deletePlaylist` / `updatePlaylist`（增补 `songIdToAdd` / `name`）
@@ -321,7 +321,7 @@ Invoke-RestMethod "$b/orgs/pyss56/actions/secrets" -Headers $h
 
 ## 7. 另一条并行任务线：Subsonic 协议补齐
 
-参照 `docs/guide/subsonic-alignment-todo.md`：
+详见 `TODO.md`（Subsonic 协议补齐未落地项）：
 
 - 批 1-4 已完成并提交（`star`/`unstar`、`setRating`、播放列表写操作、`getIndexes`）
 - **批 5 未做**：空结构兜底 + `getScanStatus` 等
