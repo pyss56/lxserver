@@ -649,7 +649,9 @@ class SubsonicHandler {
                     music = await txMusicInfo(songId)
                     break
                 case 'wy': {
-                    const raw: any = await wyMusicInfo(songId)
+                    // 注意：wy/musicInfo.js 返回的是 requestObj，真实数据在 .promise 里。
+                    // 直接 await 拿到的是 requestObj 本身，字段全是 undefined，会生成空壳记录。
+                    const raw: any = await (wyMusicInfo(songId) as any).promise
                     if (raw) {
                         music = {
                             id: `wy_${songId}`,
@@ -682,7 +684,13 @@ class SubsonicHandler {
             // 统一补齐 id / source，避免存入收藏后无法被后续查找识别
             if (!music.source) music.source = source
             if (!music.id) music.id = `${source}_${music.songmid || music.songId || songId}`
-            if (!music.songmid && music.songId) music.songmid = music.songId
+            if (!music.songmid) music.songmid = music.songId || songId
+            // 有效性校验：源返回空壳（接口失败只给出对象骨架）时视为取回失败，
+            // 避免把没有歌名的残缺记录写进「我的收藏」
+            if (!music.name) {
+                console.warn(`[Subsonic] resolveMusicById ${id} 取回结果缺少歌名，已放弃（不写入收藏）`)
+                return null
+            }
             return music as LX.Music.MusicInfo
         } catch (e) {
             console.warn(`[Subsonic] resolveMusicById ${id} 失败:`, (e as Error).message)
