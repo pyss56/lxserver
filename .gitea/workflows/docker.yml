@@ -1,0 +1,86 @@
+name: Build and Push Docker Image
+
+# Gitea Actions 专用：触发目录为 .gitea/workflows（GitHub 的 .github/workflows 不会被 Gitea 读取）
+# 本 workflow 完全本地化：不引用任何 github.com 资源，克隆 / 登录 / 推送全部走内网 Gitea。
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# 注意：不要加 concurrency + cancel-in-progress。
+# Gitea 1.27 下它会把新触发的 run 直接取消（job 还没被 runner 接走就 cancelled），
+# 表现为推送后构建"秒失败"。需要排队控制时改为在 workflow 开头处理。
+
+env:
+  # 内网 Gitea（走 HTTPS 反代 git.l.pyss.cn，证书 CA 签发、受信）；完全本地，不依赖 github.com
+  GITEA_HOST: git.l.pyss.cn
+  # 仓库路径（org/repo），显式写死，避免依赖 GitHub 兼容变量推断
+  GITEA_REPO: pyss56/lxserver
+  # 容器 registry 走 HTTPS 域名（docker 默认 443/TLS，无需 runner 侧 insecure-registries）
+  REGISTRY: git.l.pyss.cn
+
+jobs:
+  build_and_push:
+    # 按你 act_runner 注册时使用的标签填写，默认是 ubuntu-latest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository (本地 Gitea 克隆)
+        # 不使用 actions/checkout：runner 网络无法访问 github.com，会卡在拉取 action 仓库。
+        # 直接从本地 Gitea 克隆；认证用 Gitea 自动注入的仓库 token（下方 secrets.GITHUB_TOKEN，
+        # 这是 Gitea 本地提供的 token，与 github.com 无关）。
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 清理工作区（Gitea 可能预置了部分文件），确保空目录后再克隆
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+          git clone "https://oauth2:${GITEA_TOKEN}@${GITEA_HOST}/${GITEA_REPO}.git" .
+          git checkout "${GITHUB_SHA}"
+          git log --oneline -1
+
+      - name: Read version from config
+        run: |
+          VERSION=$(grep "version:" public/js/config.js | sed "s/.*'\(.*\)'.*/\1/")
+          [ -z "$VERSION" ] && VERSION=latest
+          echo "PROJECT_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
+          # registry 要求镜像名全小写
+          echo "IMAGE_NAME=$(echo ${GITEA_REPO} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Update build hash
+        # 只更新构建产物，不回推 git（避免 runner 需要写仓库权限）
+        continue-on-error: true
+        run: node scripts/update-build-hash.js
+
+      - name: Log in to Gitea container registry
+        env:
+          # 推荐在仓库 Settings → Secrets 配置；未配置时回退到 runner 内置 token
+          REGISTRY_USER: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASS: ${{ secrets.REGISTRY_PASSWORD }}
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          USER="${REGISTRY_USER:-${GITHUB_ACTOR}}"
+          PASS="${REGISTRY_PASS:-${GITEA_TOKEN}}"
+          echo "$PASS" | docker login "$REGISTRY" -u "$USER" --password-stdin
+
+      - name: Build image (linux/amd64)
+        run: |
+          docker build \
+            -f Dockerfile \
+            -t "$REGISTRY/$IMAGE_NAME:${SHORT_SHA}" \
+            -t "$REGISTRY/$IMAGE_NAME:latest" \
+            -t "$REGISTRY/$IMAGE_NAME:${PROJECT_VERSION}" \
+            .
+
+      - name: Push image
+        run: |
+          docker push "$REGISTRY/$IMAGE_NAME:${SHORT_SHA}"
+          docker push "$REGISTRY/$IMAGE_NAME:latest"
+          docker push "$REGISTRY/$IMAGE_NAME:${PROJECT_VERSION}"
+
+      - name: Logout
+        if: always()
+        run: docker logout "$REGISTRY" || true

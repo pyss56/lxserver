@@ -1,8 +1,7 @@
-.git
-.gitignore
 node_modules
 data
 logs
-lx-music-desktop-master
-dist-electron
-build
+.git
+.gitignore
+**/*.log
+build-output

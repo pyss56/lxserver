@@ -4,17 +4,21 @@ FROM base AS builder
 WORKDIR /source-code
 COPY . .
 
-RUN apk add --update \
-  g++ \
-  make \
-  py3-pip \
-  nodejs \
-  npm \
-  && (apk add --no-cache chromaprint || true) \
-  && npm install --ignore-scripts --no-audit --no-fund && npm run build \
-  && rm -rf node_modules && npm install --omit=dev --no-audit --no-fund \
+# 构建期依赖：任一 apk 包缺失（如部分 alpine 版本已移除 py3-pip）都不应中断整条构建
+RUN apk add --update --no-cache g++ make nodejs npm \
+  && (apk add --no-cache py3-pip || echo "py3-pip unavailable, skipping") \
+  && (apk add --no-cache chromaprint || echo "chromaprint apk unavailable, skipping")
+
+# fpcalc 仅为可选的音频指纹依赖，构建期跳过其联网下载（缺失不影响启动）
+ENV SKIP_FPCALC_DOWNLOAD=1
+
+RUN npm install --ignore-scripts --no-audit --no-fund \
+  && npm run build \
+  && rm -rf node_modules \
+  && npm install --omit=dev --no-audit --no-fund \
   && mkdir -p build-output \
-  && mv server node_modules config.js index.js package.json public -t build-output
+  && cp config.example.js build-output/config.js \
+  && mv server node_modules index.js package.json public -t build-output
 
 
 FROM base AS final
