@@ -669,7 +669,7 @@ class SubsonicHandler {
             track: (music as any).track || 0,
             year: (music as any).year || 0,
             genre: genreMatch,
-            coverArt: (picUrl && typeof picUrl === 'string' && picUrl.startsWith('http')) ? picUrl : id,
+            coverArt: (picUrl && typeof picUrl === 'string' && picUrl.startsWith('http')) ? picUrl : albumId,
             duration: this.parseDuration(music.interval),
             ...this.getBestQualityMeta(music),
             isVideo: false,
@@ -884,6 +884,15 @@ class SubsonicHandler {
             ))
         }
 
+        // [新增] 将 QQ 音乐排行榜(榜单)作为只读播放列表暴露，仅在音流「全部歌单」中出现
+        // （owner 设为系统名而非当前用户，使其被「我的歌单」的 owner 过滤排除，但仍留在「全部歌单」）
+        try {
+            const lbPlaylists = await this.getLeaderboardPlaylists()
+            playlists.push(...lbPlaylists)
+        } catch (err) {
+            console.error('[Subsonic] Append leaderboard playlists failed:', err)
+        }
+
         if (format === 'json') {
             return this.sendResponse(res, { playlists: { playlist: playlists } }, format)
         }
@@ -895,6 +904,11 @@ class SubsonicHandler {
     private async handleGetPlaylist(res: http.ServerResponse, username: string, params: URLSearchParams, format: string) {
         const id = params.get('id')
         if (!id) return this.sendError(res, 10, 'Required parameter is missing: id', format)
+
+        // [新增] 排行榜(榜单)虚拟只读播放列表
+        if (id.startsWith('lb_')) {
+            return this.handleGetLeaderboardPlaylist(res, username, id, format)
+        }
 
         const userSpace = getUserSpace(username)
         const listData = await userSpace.listManage.getListData()
@@ -955,6 +969,7 @@ class SubsonicHandler {
     private async handleUpdatePlaylist(res: http.ServerResponse, username: string, params: URLSearchParams, format: string) {
         const playlistId = params.get('playlistId')
         if (!playlistId) return this.sendError(res, 10, 'Required parameter is missing: playlistId', format)
+        if (playlistId.startsWith('lb_')) return this.sendError(res, 0, '排行榜为只读播放列表，不支持修改', format)
 
         try {
             const userSpace = getUserSpace(username)
@@ -1059,6 +1074,7 @@ class SubsonicHandler {
     private async handleDeletePlaylist(res: http.ServerResponse, username: string, params: URLSearchParams, format: string) {
         const id = params.get('id')
         if (!id) return this.sendError(res, 10, 'Required parameter is missing: id', format)
+        if (id.startsWith('lb_')) return this.sendError(res, 0, '排行榜为只读播放列表，不支持删除', format)
         if (id === 'default' || id === 'love') {
             return this.sendError(res, 0, 'Built-in playlists cannot be deleted', format)
         }
@@ -1076,6 +1092,107 @@ class SubsonicHandler {
             console.error('[Subsonic] deletePlaylist error:', err)
             return this.sendError(res, 0, err.message || 'Failed to delete playlist', format)
         }
+    }
+
+    // ─────────────────────────────────────────────
+    // [新增] 排行榜(榜单) → 只读 Subsonic 播放列表
+    // 将 QQ 音乐榜单(含热歌榜)暴露为 Subsonic 播放列表，
+    // 音流等客户端无需 web 页面即可浏览/播放榜单。榜单为只读，不可增删改。
+    // ─────────────────────────────────────────────
+    private readonly leaderboardSource = 'tx'
+
+    private async getLeaderboardPlaylists(): Promise<any[]> {
+        const source = this.leaderboardSource
+        // 系统级 owner：不属于任何用户，使其在音流「我的歌单」(owner==我) 过滤中被排除，
+        // 但保留在「全部歌单」中；public:true 确保跨用户可见。
+        const owner = 'lxserver'
+        try {
+            const lb = (musicSdk as any)[source]?.leaderboard
+            if (!lb || typeof lb.getBoards !== 'function') return []
+            const result = await lb.getBoards()
+            const list = Array.isArray(result?.list) ? result.list : []
+            return list.map((board: any) => {
+                const bangid = String(board.bangid)
+                const id = `lb_${source}_${bangid}`
+                return {
+                    id,
+                    name: `榜单·${board.name}`,
+                    comment: '排行榜(只读)',
+                    owner,
+                    public: true,
+                    songCount: 0,
+                    duration: 0,
+                    created: new Date().toISOString(),
+                    changed: new Date().toISOString(),
+                    coverArt: 'logo',
+                }
+            })
+        } catch (err) {
+            console.error('[Subsonic] getLeaderboardPlaylists error:', err)
+            return []
+        }
+    }
+
+    private async handleGetLeaderboardPlaylist(res: http.ServerResponse, username: string, id: string, format: string) {
+        const parts = id.split('_') // ['lb', source, bangid...]
+        const source = parts[1]
+        const bangid = parts.slice(2).join('_')
+        try {
+            const lb = (musicSdk as any)[source]?.leaderboard
+            if (!lb) return this.sendError(res, 70, 'Leaderboard source not found', format)
+
+            const result = await lb.getBoards()
+            const boards = Array.isArray(result?.list) ? result.list : []
+            const board = boards.find((b: any) => String(b.bangid) === bangid)
+            const listName = board ? `榜单·${board.name}` : '排行榜'
+
+            const data = await lb.getList(bangid, 1)
+            const musics = (data?.list || []).map((s: any) => this.normalizeLeaderboardSong(s, source))
+
+            const coverArt = (musics[0] as any)?.img || 'logo'
+            const playlistMeta = {
+                id,
+                name: listName,
+                comment: '排行榜(只读)',
+                owner: 'lxserver',
+                public: true,
+                songCount: musics.length,
+                duration: musics.reduce((sum: number, m: any) => sum + this.parseDuration(m.interval), 0),
+                created: new Date().toISOString(),
+                changed: new Date().toISOString(),
+                coverArt,
+            }
+
+            if (format === 'json') {
+                return this.sendResponse(res, {
+                    playlist: {
+                        ...playlistMeta,
+                        entry: musics.map((m: any) => this.musicToSongFlat(m, id)),
+                    },
+                }, format)
+            }
+            return this.sendResponse(res, {
+                playlist: {
+                    attrs: playlistMeta,
+                    children: {
+                        entry: musics.map((m: any) => this.musicToSongXml(m, id)),
+                    },
+                },
+            }, format)
+        } catch (err: any) {
+            console.error('[Subsonic] handleGetLeaderboardPlaylist error:', err)
+            return this.sendError(res, 0, '获取排行榜失败: ' + (err?.message || err), format)
+        }
+    }
+
+    /** 补齐榜单歌曲的 LX 标准 id 与封面，确保音流可解析并播放 */
+    private normalizeLeaderboardSong(song: any, source: string): any {
+        const songmid = song.songmid || song.songId || song.id
+        song.id = `${source}_${songmid}`
+        song.source = source
+        if (!song.meta) song.meta = {}
+        if (!song.meta.picUrl && song.img) song.meta.picUrl = song.img
+        return song
     }
 
     // getAlbum: 返回 album + song[] 格式（音流等客户端期望的格式）
@@ -2967,21 +3084,25 @@ class SubsonicHandler {
             // console.log(`[CoverArt] SDK also returned nothing for song ${id}`)
         } else if (id.startsWith('alb_')) {
             // [修复] 专辑封面：绝不能直接调歌曲 getPic（专辑对象无 songmid/hash，会读取 undefined.length 崩溃）。
-            // 优先用本地专辑库的 picUrl；没有则落到函数末尾的 204 兜底。
+            // 1) 优先用本地专辑库的 picUrl；2) 没有（云端/推荐专辑）则按专辑 mid 直接构造 QQ 封面 URL。
             const parts = id.split('_')
             const source = parts[1]
             const realId = parts.slice(2).join('_')
+            let localPic: string | undefined
             try {
                 const libAlbums = await this.getLibraryData(username, 'albums')
                 const alb = libAlbums.find((a: any) =>
                     `${(a.source || 'wy')}_${a.id}` === id || String(a.id) === realId)
-                const localPic = alb?.picUrl || alb?.img
-                if (localPic) return this.proxyCoverImage(res, localPic)
+                localPic = alb?.picUrl || alb?.img
             } catch (e) {
                 console.error(`[CoverArt] read album library failed for ${id}:`, (e as Error)?.message)
             }
+            if (localPic) return this.proxyCoverImage(res, localPic)
+            // [修复] 云端/推荐专辑不进本地库，按专辑 mid 直接构造封面 URL（修复首页推荐专辑缺图）
+            const cloudCover = this.buildAlbumCoverUrl(source, realId)
+            if (cloudCover) return this.proxyCoverImage(res, cloudCover)
             // 注：musicSdk 各源未统一暴露专辑封面接口（kg 的 getAlbumInfo 未挂到 SDK 对象上），
-            // 此处不再强行调用歌曲 getPic，避免崩溃；专辑库有 picUrl 时才会返回封面。
+            // 此处不再强行调用歌曲 getPic，避免崩溃；专辑库有 picUrl 或可按 mid 构造时才返回封面。
         } else if (id.startsWith('art_')) {
             // [修改] 歌手封面逻辑优化：先查本地库，再查歌手图助手
             const parts = id.split('_')
@@ -3136,6 +3257,19 @@ class SubsonicHandler {
                 },
             },
         }, format)
+    }
+
+    /**
+     * 按平台 + 专辑 mid 直接构造封面 URL（用于云端/推荐专辑，未进本地库）
+     */
+    private buildAlbumCoverUrl(source: string, mid: string): string | null {
+        if (!mid) return null
+        switch (source) {
+            case 'tx':
+                return `https://y.gtimg.cn/music/photo_new/T002R300x300M000${mid}.jpg?max_age=2592000`
+            default:
+                return null
+        }
     }
 
     /**

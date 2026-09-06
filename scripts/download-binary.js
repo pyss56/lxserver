@@ -24,7 +24,7 @@ const PLATFORMS = [
 // 获取最新版本号
 function getLatestVersion() {
     return new Promise((resolve, reject) => {
-        https.get(GITHUB_RELEASES_URL, (res) => {
+        const req = https.get(GITHUB_RELEASES_URL, (res) => {
             if (res.statusCode === 302 || res.statusCode === 301) {
                 const location = res.headers.location;
                 const versionMatch = location.match(/tag\/(v[\d.]+)/);
@@ -36,14 +36,17 @@ function getLatestVersion() {
             } else {
                 reject(new Error('获取最新版本失败，状态码: ' + res.statusCode));
             }
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        // [修复] 构建环境常无外网/被墙，加超时避免无限挂起（exit code 152/超时）
+        req.setTimeout(15000, () => req.destroy(new Error('查询最新版本超时（可能无外网访问）')));
     });
 }
 
 // 下载文件
 function downloadFile(url, dest) {
     return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
+        const req = https.get(url, (res) => {
             if (res.statusCode === 302 || res.statusCode === 301) {
                 downloadFile(res.headers.location, dest).then(resolve).catch(reject);
                 return;
@@ -60,7 +63,10 @@ function downloadFile(url, dest) {
             file.on('error', (err) => {
                 fs.unlink(dest, () => reject(err));
             });
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        // [修复] 构建环境常无外网/被墙，加超时避免无限挂起（exit code 152/超时）
+        req.setTimeout(30000, () => req.destroy(new Error('下载超时（可能无外网访问）')));
     });
 }
 
@@ -181,8 +187,9 @@ async function main() {
         console.log('任务完成！');
 
     } catch (error) {
-        console.error('任务失败:', error.message);
-        process.exit(1);
+        // [修复] fpcalc 为可选组件（仅音频指纹识别用），下载失败不应阻断构建/镜像打包。
+        // 生产镜像的 final 阶段还会尝试通过 apk 安装 chromaprint 来提供 fpcalc。
+        console.error('[WARN] 自动下载 fpcalc 失败（可忽略，不影响服务器运行）:', error.message);
     }
 }
 
