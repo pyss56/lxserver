@@ -38,6 +38,7 @@ const SESSION_COOKIE_NAME = 'lx_player_session'
 
 // 收藏歌手列表头像补全：内存缓存（避免每次刷新重复请求音源）
 const artistPicCache = new Map<string, string>()
+const artistPicInFlight = new Map<string, Promise<string | null>>()
 function extractArtistPic(d: any): string | null {
   if (!d || typeof d !== 'object') return null
   return d.avatar || d.img || d.pic || d.picUrl || d.picture || d.image || d.cover || null
@@ -45,11 +46,97 @@ function extractArtistPic(d: any): string | null {
 
 // 收藏专辑列表封面补全：内存缓存（best-effort：取专辑歌曲列表首曲 img）
 const albumPicCache = new Map<string, string>()
+const albumPicInFlight = new Map<string, Promise<string | null>>()
 function extractAlbumPic(d: any): string | null {
   const first = d?.list?.[0]
   const candidates = [first?.img, first?.meta?.img, d?.info?.img, d?.img, d?.pic, d?.cover, d?.coverUrl]
   for (const v of candidates) if (typeof v === 'string' && v) return v
   return null
+}
+
+// 进程级共享信号量：限制整个服务同时向音源回源拉取专辑/歌手详情的并发数，防止限流
+const MEDIA_METADATA_FETCH_MAX_CONCURRENCY = 5
+let activeMediaMetadataFetches = 0
+const mediaMetadataWaiters: Array<() => void> = []
+
+function acquireMediaMetadataSlot(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (activeMediaMetadataFetches < MEDIA_METADATA_FETCH_MAX_CONCURRENCY) {
+      activeMediaMetadataFetches++
+      resolve()
+    } else {
+      mediaMetadataWaiters.push(resolve)
+    }
+  })
+}
+
+function releaseMediaMetadataSlot() {
+  activeMediaMetadataFetches = Math.max(0, activeMediaMetadataFetches - 1)
+  const next = mediaMetadataWaiters.shift()
+  if (next) {
+    activeMediaMetadataFetches++
+    next()
+  }
+}
+
+/** 进程级共享的专辑封面拉取：带全局并发限制与 In-flight Promise 复用 */
+async function fetchAlbumPicShared(source: string, id: string | number): Promise<string | null> {
+  const key = `${source}::${id}`
+  const cached = albumPicCache.get(key)
+  if (cached) return cached
+
+  if (albumPicInFlight.has(key)) {
+    return albumPicInFlight.get(key)!
+  }
+
+  const promise = (async () => {
+    await acquireMediaMetadataSlot()
+    try {
+      if (albumPicCache.has(key)) return albumPicCache.get(key) || null
+      const detail = await musicSdk[source]?.extendDetail?.getAlbumSongs?.(String(id))
+      const pic = extractAlbumPic(detail) || null
+      if (pic) albumPicCache.set(key, pic)
+      return pic
+    } catch {
+      return null
+    } finally {
+      releaseMediaMetadataSlot()
+      albumPicInFlight.delete(key)
+    }
+  })()
+
+  albumPicInFlight.set(key, promise)
+  return promise
+}
+
+/** 进程级共享的歌手头像拉取：带全局并发限制与 In-flight Promise 复用 */
+async function fetchArtistPicShared(source: string, id: string | number): Promise<string | null> {
+  const key = `${source}::${id}`
+  const cached = artistPicCache.get(key)
+  if (cached) return cached
+
+  if (artistPicInFlight.has(key)) {
+    return artistPicInFlight.get(key)!
+  }
+
+  const promise = (async () => {
+    await acquireMediaMetadataSlot()
+    try {
+      if (artistPicCache.has(key)) return artistPicCache.get(key) || null
+      const detail = await musicSdk[source]?.extendDetail?.getArtistDetail?.(String(id))
+      const pic = extractArtistPic(detail) || null
+      if (pic) artistPicCache.set(key, pic)
+      return pic
+    } catch {
+      return null
+    } finally {
+      releaseMediaMetadataSlot()
+      artistPicInFlight.delete(key)
+    }
+  })()
+
+  artistPicInFlight.set(key, promise)
+  return promise
 }
 
 /** 生成随机 sessionId */
@@ -523,8 +610,8 @@ const saveUsers = () => {
 const reloadServerData = async () => {
   startupLog.info('Hot-reloading server data (users and config)...')
 
-  // 1. 重新加载 config.js (必须先加载基础配置)
-  const configPath = process.env.CONFIG_PATH || path.join(process.cwd(), 'config.js')
+  // 1. 重新加载配置文件 (必须先加载基础配置)
+  const configPath = global.lx.configPath || process.env.CONFIG_PATH || path.join(global.lx.dataPath, 'config.js')
   if (fs.existsSync(configPath)) {
     try {
       delete require.cache[require.resolve(configPath)]
@@ -549,9 +636,9 @@ const reloadServerData = async () => {
           backupInterval: global.lx.config['sync.backupInterval'],
         })
       }
-      startupLog.info('Config.js re-loaded and merged.')
+      startupLog.info(`Config re-loaded and merged from ${configPath}.`)
     } catch (err: any) {
-      startupLog.error('Failed to reload config.js:', err.message)
+      startupLog.error('Failed to reload config file:', err.message)
     }
   }
 
@@ -2110,19 +2197,14 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
           let arr: any[] = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
           if (!Array.isArray(arr)) arr = []
           // [修复] 对没有可用 picUrl 的歌手，实时从音源拉取头像并补全（带内存缓存，单条失败不影响整体）
+          // [稳健] 进程级共享并发队列与 In-flight Promise 复用，避免多请求并发/重复击穿音源接口
           const needFetch = arr.filter((a: any) => a && a.id != null && a.source &&
             !(a.picUrl && /^https?:\/\//.test(String(a.picUrl))))
           let changed = false
           if (needFetch.length) {
             await Promise.all(needFetch.map(async (a: any) => {
-              const key = `${a.source}::${a.id}`
               try {
-                let pic: string | null = artistPicCache.get(key) ?? null
-                if (!pic) {
-                  const detail = await musicSdk[a.source]?.extendDetail?.getArtistDetail?.(String(a.id))
-                  pic = extractArtistPic(detail) || null
-                  if (pic) artistPicCache.set(key, pic)
-                }
+                const pic = await fetchArtistPicShared(a.source, a.id)
                 if (pic) { a.picUrl = pic; changed = true }
               } catch (e) { /* 忽略单个歌手的拉取失败 */ }
             }))
@@ -2184,31 +2266,17 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
           let arr: any[] = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
           if (!Array.isArray(arr)) arr = []
           // [修复] 对没有可用 picUrl 的专辑，实时从音源拉取封面并补全（best-effort，带内存缓存，单条失败不影响整体）
-          // [稳健] 限制并发拉取数量，避免一次性对音源发起大量请求导致限流/超时；复用 albumPicCache 且只补全一次后持久化
+          // [稳健] 进程级共享并发队列与 In-flight Promise 复用，避免多请求并发/重复击穿音源接口
           const needFetch = arr.filter((a: any) => a && a.id != null && a.source &&
             !(a.picUrl && /^https?:\/\//.test(String(a.picUrl))))
           let changed = false
           if (needFetch.length) {
-            const CONCURRENCY = 5
-            let cursor = 0
-            const worker = async () => {
-              while (cursor < needFetch.length) {
-                const a = needFetch[cursor++]
-                const key = `${a.source}::${a.id}`
-                try {
-                  let pic: string | null = albumPicCache.get(key) ?? null
-                  if (!pic) {
-                    const detail = await musicSdk[a.source]?.extendDetail?.getAlbumSongs?.(String(a.id))
-                    pic = extractAlbumPic(detail) || null
-                    if (pic) albumPicCache.set(key, pic)
-                  }
-                  if (pic) { a.picUrl = pic; changed = true }
-                } catch (e) { /* 忽略单个专辑的拉取失败 */ }
-              }
-            }
-            await Promise.all(
-              Array.from({ length: Math.min(CONCURRENCY, needFetch.length) }, () => worker())
-            )
+            await Promise.all(needFetch.map(async (a: any) => {
+              try {
+                const pic = await fetchAlbumPicShared(a.source, a.id)
+                if (pic) { a.picUrl = pic; changed = true }
+              } catch (e) { /* 忽略单个专辑的拉取失败 */ }
+            }))
             // 将补全后的 picUrl 持久化回文件：每个专辑最多实时查一次，之后永久生效（重启也不再查询）
             if (changed) {
               try { fs.writeFileSync(filePath, JSON.stringify(arr, null, 2), 'utf-8') } catch { /* ignore */ }
@@ -5860,13 +5928,15 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
             'subsonic.onlineSearch': global.lx.config['subsonic.onlineSearch'] ?? true,
             'subsonic.onlineSearchMode': global.lx.config['subsonic.onlineSearchMode'] ?? 'fallback',
             'subsonic.onlineSearchSources': global.lx.config['subsonic.onlineSearchSources'] ?? 'wy,tx,kw,kg,mg',
+            'subsonic.publicLeaderboards': global.lx.config['subsonic.publicLeaderboards'] ?? false,
+            'subsonic.leaderboardSource': global.lx.config['subsonic.leaderboardSource'] ?? 'tx',
             'subsonic.lyricTranslation': global.lx.config['subsonic.lyricTranslation'] ?? true,
             'subsonic.cacheOnPlay': global.lx.config['subsonic.cacheOnPlay'] ?? false,
             'subsonic.playCacheFirst': global.lx.config['subsonic.playCacheFirst'] ?? true,
             'singer.sourcePriority': (global.lx.config['singer.sourcePriority'] || ['tx', 'wy']).join(','),
             'artist.maxFetchPages': global.lx.config['artist.maxFetchPages'] ?? 20,
             'system.allowUnsafeVM': global.lx.config['system.allowUnsafeVM'] || false,
-            configFilePath: process.env.CONFIG_PATH || path.join(process.cwd(), 'config.js'),
+            configFilePath: global.lx.configPath || process.env.CONFIG_PATH || path.join(global.lx.dataPath, 'config.js'),
           }
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -5974,6 +6044,11 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
               if (newConfig['subsonic.onlineSearch'] !== undefined) global.lx.config['subsonic.onlineSearch'] = newConfig['subsonic.onlineSearch']
               if (newConfig['subsonic.onlineSearchMode'] !== undefined) global.lx.config['subsonic.onlineSearchMode'] = newConfig['subsonic.onlineSearchMode']
               if (newConfig['subsonic.onlineSearchSources'] !== undefined) global.lx.config['subsonic.onlineSearchSources'] = newConfig['subsonic.onlineSearchSources']
+              if (newConfig['subsonic.publicLeaderboards'] !== undefined) global.lx.config['subsonic.publicLeaderboards'] = newConfig['subsonic.publicLeaderboards']
+              if (newConfig['subsonic.leaderboardSource'] !== undefined) {
+                const s = String(newConfig['subsonic.leaderboardSource']).trim().toLowerCase()
+                if (['tx', 'wy', 'kg', 'kw', 'mg'].includes(s)) global.lx.config['subsonic.leaderboardSource'] = s
+              }
               if (newConfig['subsonic.lyricTranslation'] !== undefined) global.lx.config['subsonic.lyricTranslation'] = newConfig['subsonic.lyricTranslation']
               if (newConfig['subsonic.cacheOnPlay'] !== undefined) global.lx.config['subsonic.cacheOnPlay'] = newConfig['subsonic.cacheOnPlay']
               if (newConfig['subsonic.playCacheFirst'] !== undefined) global.lx.config['subsonic.playCacheFirst'] = newConfig['subsonic.playCacheFirst']
@@ -6002,7 +6077,7 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
                 })
               }
 
-              const configPath = process.env.CONFIG_PATH || path.join(process.cwd(), 'config.js')
+              const configPath = global.lx.configPath || process.env.CONFIG_PATH || path.join(global.lx.dataPath, 'config.js')
               const configContent = `module.exports = ${JSON.stringify({
                 serverName: global.lx.config.serverName,
                 bindIP: global.lx.config.bindIP,
@@ -6045,6 +6120,8 @@ const handleStartServer = async (port = 9527, ip = '127.0.0.1') => await new Pro
                 'subsonic.onlineSearch': global.lx.config['subsonic.onlineSearch'],
                 'subsonic.onlineSearchMode': global.lx.config['subsonic.onlineSearchMode'],
                 'subsonic.onlineSearchSources': global.lx.config['subsonic.onlineSearchSources'],
+                'subsonic.publicLeaderboards': global.lx.config['subsonic.publicLeaderboards'],
+                'subsonic.leaderboardSource': global.lx.config['subsonic.leaderboardSource'],
                 'subsonic.lyricTranslation': global.lx.config['subsonic.lyricTranslation'],
                 'subsonic.cacheOnPlay': global.lx.config['subsonic.cacheOnPlay'],
                 'subsonic.playCacheFirst': global.lx.config['subsonic.playCacheFirst'],
