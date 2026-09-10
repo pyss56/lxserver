@@ -2957,6 +2957,149 @@ class SubsonicHandler {
         }, format)
     }
 
+    /**
+     * 按音质优先级 + 平台优选解析音流（仅用于 Subsonic stream）。
+     * 不是"失败降级"，而是主动按优先级选择最优可用方案：
+     *  - 音质优先级：subsonic.quality.priority（默认 flac > 320k > 128k），受客户端 maxBitrate 上界约束。
+     *    clientCapMode=hard 时仅选 ≤ maxBitrate 的最高优先级音质；soft 时若 ≤ 上限都取不到，再向上突破选更高优先级。
+     *  - 平台优选：客户端所选源(requested)必优先；若开启跨平台，再按 subsonic.source.priority 顺序优选其它平台。
+     *  - 同源多脚本：subsonic.source.autoSwitchCustom 开启时，callUserApiGetMusicUrl 内部循环同平台所有自定义源脚本。
+     * 客户端规则(source 选择 / maxBitrate 上界)始终优先于后台默认值；subsonic.quality.enabled=false 时退化为单次解析。
+     */
+    /**
+     * 计算某平台在给定客户端 maxBitrate 下的音质尝试顺序(高优先级在前)：
+     *  - 优先用该平台的逐源覆盖 subsonic.quality.sources.<src>.priority，否则用全局 subsonic.quality.priority。
+     *  - clientCapMode=hard：仅保留 ≤ maxBitrate 的音质；soft：先 ≤ 上限、再突破上限选更高优先级。
+     * 该顺序同时供源站回源(resolveStreamUrl)与本地缓存探测(playCacheFirst)复用，保证两者一致。
+     */
+    private getQualityPriorityOrder(src: string, maxBitrate: number): string[] {
+        const cfg = global.lx.config
+        const asList = (v: any, fb: string[]): string[] => {
+            const arr = Array.isArray(v) ? v.map(String) : String(v || '').split(',').map((s: string) => s.trim()).filter(Boolean)
+            return arr.length ? arr : fb
+        }
+        const globalPriority = asList(cfg['subsonic.quality.priority'], ['flac', '320k', '128k'])
+        const srcOverride = (cfg['subsonic.quality.sources'] as any)?.[src]
+        const pri = asList(srcOverride, globalPriority)
+        const cap = maxBitrate === 0 || maxBitrate >= 320 ? Infinity : maxBitrate
+        const KBPS: Record<string, number> = { master: 9999, hires: 9999, flac24bit: 9999, flac: 9999, '320k': 320, '192k': 192, '128k': 128 }
+        const withinCap = (q: string) => (KBPS[q] ?? 128) <= cap
+        const inCap = pri.filter(withinCap)
+        const overCap = pri.filter(q => !withinCap(q))
+        return cfg['subsonic.quality.clientCapMode'] === 'soft' ? [...inCap, ...overCap] : inCap
+    }
+
+    private async resolveStreamUrl(
+        source: string,
+        songmid: string,
+        id: string,
+        musicInfo: any,
+        requestedQuality: string,
+        maxBitrate: number,
+        username: string,
+    ): Promise<{ url: string, quality: string, selected?: string }> {
+        const cfg = global.lx.config
+        // 总开关关闭 → 退化为单次解析（服务端硬策略，客户端无法 override 打开）
+        if (cfg['subsonic.quality.enabled'] === false) {
+            const r = await callUserApiGetMusicUrl(source as any, musicInfo as any, requestedQuality, username)
+            if (!r?.url) throw new Error('Could not resolve music URL')
+            return { url: r.url, quality: r.type || requestedQuality }
+        }
+
+        const asList = (v: any, fb: string[]): string[] => {
+            const arr = Array.isArray(v) ? v.map(String) : String(v || '').split(',').map((s: string) => s.trim()).filter(Boolean)
+            return arr.length ? arr : fb
+        }
+        const autoSwitchCustom = cfg['subsonic.source.autoSwitchCustom'] !== false
+
+        // 平台优选顺序：客户端所选源优先，其余按 subsonic.source.priority
+        const sourcesToTry: string[] = [source]
+        if (cfg['subsonic.source.crossPlatform'] !== false) {
+            const srcPriority: string[] = asList(cfg['subsonic.source.priority'], ['kw', 'tx', 'wy', 'mg', 'kg'])
+            for (const s of srcPriority) if (s !== source && !sourcesToTry.includes(s)) sourcesToTry.push(s)
+        }
+
+        for (const trySource of sourcesToTry) {
+            const excludeApiSources: string[] = []
+
+            // 跨平台时按歌名+歌手搜索替身；同源直接用原 songmid
+            let candidates: { music: any }[]
+            if (trySource === source) {
+                candidates = [{ music: musicInfo }]
+            } else {
+                const name = musicInfo?.name
+                const singer = musicInfo?.singer
+                if (!name) continue
+                const query = singer ? `${name} ${singer}` : name
+                let list: any[] = []
+                try {
+                    const searchRes: any = await (musicSdk as any)[trySource]?.musicSearch?.search?.(query, 1, 5)
+                    list = searchRes?.list || []
+                } catch (e: any) {
+                    if (cfg['subsonic.enableDebug']) console.log(`[Subsonic] quality-select crossPlatform ${source}->${trySource} search failed: ${e?.message || e}`)
+                    continue
+                }
+                if (list.length === 0) continue
+                const match = list.find((it: any) => this.matchSongAcrossSources(it, musicInfo)) || list[0]
+                const tSongmid = String(match?.songmid || match?.id || '')
+                if (!tSongmid) continue
+                candidates = [{
+                    music: {
+                        source: trySource,
+                        songmid: tSongmid,
+                        id: `${trySource}_${tSongmid}`,
+                        name: match.name,
+                        singer: match.singer,
+                        meta: { ...(match.meta || {}), songId: tSongmid },
+                    },
+                }]
+            }
+
+            const order = this.getQualityPriorityOrder(trySource, maxBitrate)
+            for (const cand of candidates) {
+                for (const q of order) {
+                    try {
+                        const r = await callUserApiGetMusicUrl(
+                            trySource as any, cand.music as any, q, username,
+                            undefined, autoSwitchCustom,
+                            excludeApiSources.length ? excludeApiSources : undefined,
+                        )
+                        if (r?.url) {
+                            const selected = trySource === source
+                                ? (q !== requestedQuality ? `quality:${source}/${q}` : undefined)
+                                : `source:${source}->${trySource}/${q}`
+                            return { url: r.url, quality: r.type || q, selected }
+                        }
+                    } catch (err: any) {
+                        // 收集本次失败过的自定义源，避免后续音质/平台重复试死源
+                        const atts = err?.attempts
+                        if (Array.isArray(atts)) {
+                            for (const a of atts) {
+                                if (a?.sourceId && !excludeApiSources.includes(a.sourceId)) excludeApiSources.push(a.sourceId)
+                                if (a?.name && !excludeApiSources.includes(a.name)) excludeApiSources.push(a.name)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        throw new Error('Could not resolve music URL (all quality/source candidates failed)')
+    }
+
+    /** 跨平台重锚时判断搜索结果是否匹配原曲：歌名归一化相等/包含 + 歌手部分匹配 */
+    private matchSongAcrossSources(it: any, musicInfo: any): boolean {
+        const norm = (s: string) => String(s || '').toLowerCase().replace(/[\s\-_()（）【】\[\]、，,。.]/g, '')
+        const n1 = norm(it?.name)
+        const n2 = norm(musicInfo?.name)
+        if (!n1 || !n2) return false
+        if (n1 !== n2 && !n1.includes(n2) && !n2.includes(n1)) return false
+        const s1 = norm(it?.singer)
+        const s2 = norm(musicInfo?.singer)
+        if (s1 && s2 && !s1.includes(s2) && !s2.includes(s1)) return false
+        return true
+    }
+
     private async handleStream(
         req: http.IncomingMessage,
         res: http.ServerResponse,
@@ -3041,12 +3184,17 @@ class SubsonicHandler {
                 return this.sendError(res, 0, 'Could not resolve radio track', format)
             }
 
-            // [新增] 本地缓存优先播放：受 subsonic.playCacheFirst 开关控制(默认开启)，若该歌曲已存在于用户的 cache 或 music 目录，直接流式回传本地文件，避免请求源站
+            // [新增] 本地缓存优先播放：受 subsonic.playCacheFirst 开关控制(默认开启)。
+            // 按音质优先级顺序(受 maxBitrate 上界约束)精确探测缓存，命中即直接回传本地文件，跳过源站回源与优先级优选；
+            // 与 resolveStreamUrl 共用 getQualityPriorityOrder，保证"缓存命中"与"回源优选"的音质语义一致（不串音质）。
             if (global.lx.config['subsonic.playCacheFirst'] !== false) {
-                const cacheCheck = checkCache({ source, songmid, id, quality }, username, false)
-                if (cacheCheck.exists && cacheCheck.filename) {
-                    console.log(`[Subsonic] Stream hit local cache for ${id} (${cacheCheck.quality || quality}): ${cacheCheck.filename} (${cacheCheck.folder})`)
-                    return serveCacheFile(req, res, cacheCheck.filename, username)
+                const cacheOrder = this.getQualityPriorityOrder(source, maxBitrate)
+                for (const q of cacheOrder) {
+                    const c = checkCache({ source, songmid, id, quality: q, exactQuality: true }, username, false)
+                    if (c.exists && c.filename) {
+                        console.log(`[Subsonic] Stream hit local cache for ${id} (${c.quality || q}): ${c.filename} (${c.folder})`)
+                        return serveCacheFile(req, res, c.filename, username)
+                    }
                 }
             }
 
@@ -3121,15 +3269,15 @@ class SubsonicHandler {
                 }
             }
 
-            const result = await callUserApiGetMusicUrl(source as any, musicInfo as any, quality, username)
+            const result = await this.resolveStreamUrl(source, songmid, id, musicInfo, quality, maxBitrate, username)
 
             if (result && result.url) {
                 // [诊断] 打印缓存触发决策，便于排查 Subsonic 播放不缓存问题
-                console.log(`[Subsonic] stream cacheOnPlay: enabled=${global.lx.config['subsonic.cacheOnPlay']} user=${username} url=${String(result.url).slice(0, 90)}`)
+                console.log(`[Subsonic] stream cacheOnPlay: enabled=${global.lx.config['subsonic.cacheOnPlay']} user=${username} url=${String(result.url).slice(0, 90)}${result.selected ? ' selected=' + result.selected : ''}`)
                 // [新增] 播放时触发服务器缓存保存：受 subsonic.cacheOnPlay 开关控制
                 // 后台落盘到该用户缓存目录；已在播放的上一首若未下载完成，在切换新歌曲时自动 abort 中断，避免连切刷歌堆积带宽
                 if (global.lx.config['subsonic.cacheOnPlay'] && username) {
-                    const songKey = `${source}_${songmid}_${quality}`
+                    const songKey = `${source}_${songmid}_${result.quality}`
                     const previous = this.subsonicActiveTasks.get(username)
                     if (previous && previous.songKey !== songKey) {
                         console.log(`[Subsonic] User ${username} switched track, aborting previous background cache task: ${previous.songKey}`)
@@ -3139,7 +3287,7 @@ class SubsonicHandler {
                     const controller = new AbortController()
                     this.subsonicActiveTasks.set(username, { songKey, controller })
 
-                    void downloadAndCache(musicInfo, result.url, quality, username, controller.signal, false, true, true, {
+                    void downloadAndCache(musicInfo, result.url, result.quality, username, controller.signal, false, true, true, {
                         requestedSource: source,
                         downloadSource: source,
                         sourceName: source,

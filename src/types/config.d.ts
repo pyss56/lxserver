@@ -289,6 +289,41 @@ declare namespace LX {
     'subsonic.playCacheFirst'?: boolean
 
     /**
+     * Subsonic 音质优选总开关 (默认 true)。关闭后 stream 仅做单次解析、不做优先级选择。
+     */
+    'subsonic.quality.enabled'?: boolean
+
+    /**
+     * 音质优先级(从高到低, 逗号分隔), 默认 'flac,320k,128k'。按此顺序主动优选可用音质。
+     */
+    'subsonic.quality.priority'?: string
+
+    /**
+     * 逐源音质优先级覆盖, 如 'subsonic.quality.sources.kw.priority': ['flac','320k']。存在时优先于全局 priority。
+     */
+    'subsonic.quality.sources'?: Record<string, string[]>
+
+    /**
+     * 客户端 maxBitrate 上界模式: 'hard' 只选 ≤ 上限的最高优先级音质; 'soft' 上限内都取不到时再突破上限选更高优先级。
+     */
+    'subsonic.quality.clientCapMode'?: 'hard' | 'soft'
+
+    /**
+     * 跨平台优选顺序(逗号分隔), 默认 'kw,tx,wy,mg,kg'。客户端所选源始终优先, 其余按此顺序优选。
+     */
+    'subsonic.source.priority'?: string
+
+    /**
+     * 是否允许跨平台优选 (默认 true)。关闭则只在客户端所选源内做音质优选。
+     */
+    'subsonic.source.crossPlatform'?: boolean
+
+    /**
+     * 同源是否切换其它自定义源脚本 (默认 true)。callUserApiGetMusicUrl 内部已循环同平台候选脚本。
+     */
+    'subsonic.source.autoSwitchCustom'?: boolean
+
+    /**
      * 歌手信息源优先级
      */
     'singer.sourcePriority': Array<'tx' | 'wy'>

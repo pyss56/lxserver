@@ -70,6 +70,12 @@ const config: LX.Config = {
   'subsonic.lyricTranslation': true, // 是否在 Subsonic 歌词中包含翻译
   'subsonic.cacheOnPlay': false, // 是否在 Subsonic 播放时触发服务器缓存保存（落盘）
   'subsonic.playCacheFirst': true, // 是否在 Subsonic 播放时优先使用服务器已有的本地缓存/下载文件直接传输
+  'subsonic.quality.enabled': true, // 音质优选总开关: 按优先级主动选最优可用音质(非失败降级); 关闭则 stream 仅单次解析
+  'subsonic.quality.priority': 'flac,320k,128k', // 音质优先级(从高到低, 逗号分隔), 按此顺序主动优选
+  'subsonic.quality.clientCapMode': 'soft', // 客户端 maxBitrate 上界模式: hard 仅选≤上限的最高优先级; soft 上限内都取不到再突破上限选更高优先级
+  'subsonic.source.priority': 'kw,tx,wy,mg,kg', // 跨平台优选顺序(逗号分隔, 客户端所选源始终优先)
+  'subsonic.source.crossPlatform': true, // 是否允许跨平台优选(按歌名+歌手在其它平台搜索替身)
+  'subsonic.source.autoSwitchCustom': true, // 同源是否切换其它自定义源脚本(callUserApiGetMusicUrl 内部循环同平台候选脚本)
   'singer.sourcePriority': ['tx', 'wy'], // 歌手信息源优先级
   'artist.maxFetchPages': 20, // 歌手歌曲最大抓取页数
   'cache.namingPattern': 'simple', // 缓存命名规则

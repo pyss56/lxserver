@@ -60,6 +60,12 @@ module.exports = {
   "subsonic.onlineSearchSources": "wy,tx,kw,kg,mg",
   "subsonic.lyricTranslation": true,
   "subsonic.autoCacheOnPlay": true,
+  "subsonic.quality.enabled": true,
+  "subsonic.quality.priority": "flac,320k,128k",
+  "subsonic.quality.clientCapMode": "soft",
+  "subsonic.source.priority": "kw,tx,wy,mg,kg",
+  "subsonic.source.crossPlatform": true,
+  "subsonic.source.autoSwitchCustom": true,
   "singer.sourcePriority": [
     "tx",
     "wy"
