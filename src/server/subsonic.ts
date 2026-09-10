@@ -6,6 +6,7 @@ import { callUserApiGetMusicUrl } from '@/server/userApi'
 import { downloadAndCache, checkCache, serveCacheFile } from '@/server/fileCache'
 import { getSingerPic, getSingerDetail, getSingerMid } from '@/server/utils/singer'
 import { fetchRecommendedAlbums } from '@/server/utils/recommendAlbums'
+import { fetchRecommendedSongs } from '@/server/utils/recommendSongs'
 import { proxyCoverImage } from '@/server/coverProxy'
 import { fetchGenres, fetchRadios, fetchPlaylistsByGenre, fetchRadioSongs, fetchPlaylistSongs, fetchSongsByGenre } from '@/server/utils/discovery'
 import fs from 'fs'
@@ -558,6 +559,9 @@ class SubsonicHandler {
                 case 'unstar':
                     return this.handleStar(res, username, params, format, false)
 
+                case 'setRating':
+                    return this.handleSetRating(res, username, params, format)
+
                 case 'getRandomSongs':
                 case 'getSongsByGenre':
                 case 'getSongsByGenre2':
@@ -569,6 +573,11 @@ class SubsonicHandler {
 
                 case 'getTopSongs':
                     return this.handleGetTopSongs(res, username, params, format)
+
+                case 'getRecommendedSongs':
+                case 'getDailySongs':
+                case 'getSongsByTag':
+                    return this.handleGetRecommendedSongs(res, username, params, format)
 
                 case 'updatePlaylist':
                     return this.handleUpdatePlaylist(res, username, params, format)
@@ -921,10 +930,13 @@ class SubsonicHandler {
             const coverArt = (musics[0] as any)?.meta?.picUrl || (musics[0] as any)?.img || 'logo'
             playlists.push(buildPlaylist('default', '默认列表', musics, undefined, coverArt))
         }
+        // 注意：love 列表在 getPlaylists 中与「歌单(用户自建播放列表)」平级展示。
+        // 为避免与前端侧边栏折叠面板标题「我的收藏」(见 public/music/index.html) 重名，
+        // 此处 love 列表命名为「我的喜爱」，与面板内部 ♥ 列表显示名称保持一致。
         {
             const musics = listData.loveList
             const coverArt = (musics[0] as any)?.meta?.picUrl || (musics[0] as any)?.img || 'logo'
-            playlists.push(buildPlaylist('love', '我的收藏', musics, undefined, coverArt))
+            playlists.push(buildPlaylist('love', '我的喜爱', musics, undefined, coverArt))
         }
 
         for (const list of listData.userList) {
@@ -2681,6 +2693,29 @@ class SubsonicHandler {
         return this.sendResponse(res, {}, format)
     }
 
+    /**
+     * 设置歌曲评分 (Subsonic setRating)
+     * 参数: id(歌曲id), rating(0-5, 0 表示清除评分)
+     * 评分按用户持久化到 subsonic meta 的 ratings 映射中。
+     */
+    private async handleSetRating(res: http.ServerResponse, username: string, params: URLSearchParams, format: string) {
+        const id = params.get('id')
+        if (!id) return this.sendError(res, 10, 'Required parameter is missing: id', format)
+        const rating = parseInt(params.get('rating') || '0', 10)
+        if (isNaN(rating) || rating < 0 || rating > 5) {
+            return this.sendError(res, 0, 'Rating must be between 0 and 5', format)
+        }
+        const meta = await this.getUserSubsonicMeta(username)
+        if (rating === 0) {
+            delete meta.ratings[id]
+        } else {
+            meta.ratings[id] = rating
+        }
+        await this.saveUserSubsonicMeta(username, meta)
+        console.log(`[Subsonic] setRating 歌曲 ${id} -> ${rating} (user=${username})`)
+        return this.sendResponse(res, {}, format)
+    }
+
     private async handleGetStarred(res: http.ServerResponse, username: string, format: string, isV2 = true) {
         const userSpace = getUserSpace(username)
         const listData = await userSpace.listManage.getListData()
@@ -2836,6 +2871,32 @@ class SubsonicHandler {
                 },
             },
         }, format)
+    }
+
+    /**
+     * 每日推荐歌曲 (lx-server 扩展接口)
+     * 对应 Subsonic 客户端里常见的「每日推荐 / For You」入口。非官方标准方法，
+     * 通过 getRecommendedSongs / getDailySongs 调用（getSongsByTag 作为别名同样映射到此）。
+     * 返回当天稳定的推荐歌曲列表，每首均为可直接播放的在线歌曲。
+     */
+    private async handleGetRecommendedSongs(
+        res: http.ServerResponse,
+        username: string,
+        params: URLSearchParams,
+        format: string,
+    ) {
+        const size = Math.min(parseInt(params.get('size') || '20'), 100)
+        try {
+            // 取当天全部候选（最多 100），再按当前用户评分过滤：评分为 1 的歌曲排除出每日推荐
+            const all = await fetchRecommendedSongs(100)
+            const meta = await this.getUserSubsonicMeta(username)
+            const songs = all.filter((s: any) => (meta.ratings[s.id] || 0) !== 1).slice(0, size)
+            const picked = songs.map((s: any) => ({ music: s, listId: 'recommended' }))
+            return this.renderRandomSongs(res, picked, format, 'recommendedSongs', username)
+        } catch (e) {
+            console.error('[Subsonic] getRecommendedSongs 出错:', e)
+            return this.renderRandomSongs(res, [], format, 'recommendedSongs', username)
+        }
     }
 
     private async handleGetSimilarSongs(
