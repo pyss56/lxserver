@@ -30,7 +30,7 @@
 | `getPlaylists` / `getPlaylist` | 歌单 | ✅ | |
 | `createPlaylist` / `updatePlaylist` / `deletePlaylist` | 歌单 | ✅ | |
 | `star` / `unstar` | 收藏 | ✅ | |
-| `setRating` | 评分 | ✅ | 评分按用户持久化（0-5，0=清除）；每日推荐会排除评分落入「不喜欢」阈值（`subsonic.dislikeRating`，默认 1）的歌曲 |
+| `setRating` | 评分 | ✅ | 评分按用户持久化（0-5，0=清除）；每日推荐会排除该用户评分为 1 的歌曲 |
 | `scrobble` | 播放 | 🟡 | no-op（返回成功） |
 | `getNowPlaying` | 播放 | 🟡 | 返回空列表 |
 | `getLyrics` / `getLyricsBySongId` | 歌词 | ✅ | |
@@ -57,7 +57,7 @@
   - 逐张调用 `musicSdk.tx.extendDetail.getAlbumSongs(mid)` 取出专辑内歌曲；
   - 按 `tx_<songmid>` 去重，按「自然日」做种子洗牌（当天稳定、跨天换批），返回可直接播放的在线歌曲。
   - 全程公开接口、无需登录；QQ 抓取失败时回退到上次成功结果，避免每日推荐空白。
-  - **评分过滤**：返回前按请求用户过滤——评分落入「不喜欢」区间（`0 < rating <= subsonic.dislikeRating`，默认阈值为 1，可配置）的歌曲不会进入每日推荐（`setRating` 设置）。
+  - **评分过滤**：返回前按请求用户过滤——该用户评分为 1 分的歌曲不会进入每日推荐（`setRating` 设置）。
 - `subsonic.ts` 分发开关新增 `case 'getRecommendedSongs' / 'getDailySongs' / 'getSongsByTag'`，handler `handleGetRecommendedSongs` 复用 `renderRandomSongs` 输出（与 `getRandomSongs`/`getSongsByGenre` 同一条渲染链路，封面 / 播放均正常）。
 
 ### 调用示例

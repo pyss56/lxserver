@@ -2,7 +2,11 @@ version: '3.8'
 
 services:
   lx-sync-server:
-    build: .
+    # 镜像地址前缀已按需求改为 git.pyss.cn:4430（Gitea 容器 registry，公网可达）。
+    # 实测：ECS 上 TCP 4430 通、TLS 握手成功、镜像可匿名 pull（无需 docker login）。
+    # 备选（不推荐）：git.l.pyss.cn 解析到内网私有 IP(10.3.3.15)，ECS 公网不可达，仅限内网/VPN 使用。
+    image: git.pyss.cn:4430/pyss56/lxserver:latest
+    pull_policy: always
     container_name: lx-sync-server
     restart: always
     ports:
@@ -10,8 +14,18 @@ services:
     volumes:
       # 数据持久化
       - ./data:/server/data
+      # 共享音乐库持久化：服务端缓存/下载的歌曲落在这里（容器内 /server/music），
+      # 不挂载则容器重建后音乐库丢失
+      - ./music:/server/music
+      # 配置文件挂载：必须先在宿主机创建真实文件 ./config.js（cp config.example.js config.js 后修改），
+      # 否则 Docker 会把 ./config.js 当成空目录挂入，导致容器内 /server/config.js 变成目录而 require 失败。
+      # 配合下方 CONFIG_PATH=/server/config.js 才会在【启动阶段】真正加载（仅挂卷不设 CONFIG_PATH 会被忽略）。
+      - ./config.js:/server/config.js
     environment:
       # 环境变量配置，优先级高于 config.js
       - NODE_ENV=production
+      # 指向挂载的配置文件（支持 .js / .json）。必须显式设置，服务端启动阶段才会加载 /server/config.js；
+      # 不设则启动时会忽略该挂载文件，只在后续热重载时才读取。
+      - CONFIG_PATH=/server/config.js
       # 示例：通过环境变量设置用户
       # - LX_USER_myuser=mypassword
