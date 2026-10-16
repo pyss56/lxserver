@@ -27,6 +27,7 @@ const musicSdk = musicSdkRaw as any
 import { initUserApis, callUserApiGetMusicUrl, isSourceSupported, getLoadedApis, getLoadedApisCount } from './userApi'
 import * as customSourceHandlers from './customSourceHandlers'
 import * as fileCache from './fileCache'
+import { startVerifyScheduler } from './openlistBackup'
 import * as customMusicManager from './customMusicManager'
 import * as serverDownloadQueue from './serverDownloadQueue'
 import * as remasterQueue from './remasterQueue'
@@ -7241,6 +7242,16 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'snapshot.backupPath': global.lx.config['snapshot.backupPath'] ?? '',
             subsonicPortConflict: global.lx.subsonicPortConflict || null,
             configFilePath: global.lx.configPath || process.env.CONFIG_PATH || path.join(global.lx.dataPath, 'config.js'),
+            'openlist.enable': global.lx.config['openlist.enable'] ?? false,
+            'openlist.endpoint': global.lx.config['openlist.endpoint'] || '',
+            'openlist.username': global.lx.config['openlist.username'] || '',
+            'openlist.password': global.lx.config['openlist.password'] || '',
+            'openlist.token': global.lx.config['openlist.token'] || '',
+            'openlist.root': global.lx.config['openlist.root'] || '/tyCloud',
+            'openlist.keepLocalAfterUpload': global.lx.config['openlist.keepLocalAfterUpload'] !== false,
+            'openlist.verifyInterval': global.lx.config['openlist.verifyInterval'] || 5,
+            'openlist.userBackups': global.lx.config['openlist.userBackups'] || '[]',
+            'openlist.includeNonAudio': global.lx.config['openlist.includeNonAudio'] === true,
           }
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -7311,6 +7322,19 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['sync.backupInterval'] !== undefined) global.lx.config['sync.backupInterval'] = parseInt(newConfig['sync.backupInterval']) || 24
               if (newConfig['webdav.excludeCache'] !== undefined) global.lx.config['webdav.excludeCache'] = !!newConfig['webdav.excludeCache']
               if (newConfig['webdav.excludeMusic'] !== undefined) global.lx.config['webdav.excludeMusic'] = !!newConfig['webdav.excludeMusic']
+
+              // OpenList 配置
+              if (newConfig['openlist.enable'] !== undefined) global.lx.config['openlist.enable'] = newConfig['openlist.enable']
+              if (newConfig['openlist.endpoint'] !== undefined) global.lx.config['openlist.endpoint'] = newConfig['openlist.endpoint']
+              if (newConfig['openlist.username'] !== undefined) global.lx.config['openlist.username'] = newConfig['openlist.username']
+              if (newConfig['openlist.password'] !== undefined) global.lx.config['openlist.password'] = newConfig['openlist.password']
+              if (newConfig['openlist.token'] !== undefined) global.lx.config['openlist.token'] = newConfig['openlist.token']
+              if (newConfig['openlist.root'] !== undefined) global.lx.config['openlist.root'] = newConfig['openlist.root']
+              if (newConfig['openlist.keepLocalAfterUpload'] !== undefined) global.lx.config['openlist.keepLocalAfterUpload'] = newConfig['openlist.keepLocalAfterUpload']
+              if (newConfig['openlist.verifyInterval'] !== undefined) global.lx.config['openlist.verifyInterval'] = parseInt(newConfig['openlist.verifyInterval']) || 5
+              if (newConfig['openlist.userBackups'] !== undefined) global.lx.config['openlist.userBackups'] = newConfig['openlist.userBackups']
+              if (newConfig['openlist.includeNonAudio'] !== undefined) global.lx.config['openlist.includeNonAudio'] = newConfig['openlist.includeNonAudio']
+
               const validateAndCleanProxy = (addr: any) => {
                 if (!addr || typeof addr !== 'string') return ''
                 const trimmed = addr.trim()
@@ -8798,6 +8822,8 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
     }
     const bind = typeof addr == 'string' ? `pipe ${addr}` : `port ${addr.port}`
     startupLog.info(`Listening on ${ip} ${bind}`)
+    // 启动 OpenList 备份验证轮询（未启用时自动 no-op）
+    try { startVerifyScheduler() } catch (e) { console.warn('[openlist-backup] 启动验证轮询失败:', e) }
     resolve(null)
     void registerLocalSyncEvent(wss as LX.SocketServer)
   })

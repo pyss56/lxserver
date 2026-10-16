@@ -52,6 +52,25 @@ declare namespace LX {
     dataPath: string
   }
 
+  interface OpenlistUserBackup {
+    /**
+     * 用户名（对应 LX.Config.users 中的 name）
+     */
+    user: string
+    /**
+     * 是否对该用户开启音频备份
+     */
+    enabled: boolean
+    /**
+     * 备份该用户的下载(音乐)目录绝对路径，留空表示不备份下载目录
+     */
+    downloadDir: string
+    /**
+     * 备份该用户的缓存目录绝对路径，留空表示不备份缓存目录
+     */
+    cacheDir: string
+  }
+
   interface Config {
     /**
      * 同步服务名称
@@ -213,6 +232,56 @@ declare namespace LX {
      * 是否排除音乐下载目录 (data/<user>/music) 的增量同步与全量备份
      */
     'webdav.excludeMusic'?: boolean
+
+    /**
+     * 是否启用 OpenList 音频文件备份
+     */
+    'openlist.enable'?: boolean
+
+    /**
+     * OpenList 服务地址，例如 http://127.0.0.1:5244
+     */
+    'openlist.endpoint'?: string
+
+    /**
+     * OpenList 账号
+     */
+    'openlist.username'?: string
+
+    /**
+     * OpenList 密码
+     */
+    'openlist.password'?: string
+
+    /**
+     * OpenList 预置令牌（优先于账号密码）
+     */
+    'openlist.token'?: string
+
+    /**
+     * OpenList 内备份根目录（不含域名），默认 /lx_music。可为实例挂载名或自建目录（如 /tyCloud/lx_music）
+     */
+    'openlist.root'?: string
+
+    /**
+     * 上传完成后是否保留本地文件，默认 true（保留）
+     */
+    'openlist.keepLocalAfterUpload'?: boolean
+
+    /**
+     * 是否一并备份下载/缓存目录中的图片等非音频文件，默认 false
+     */
+    'openlist.includeNonAudio'?: boolean
+
+    /**
+     * 验证轮询间隔（分钟），默认 5：轮询 openlist 确认文件已落库后标记为 verified
+     */
+    'openlist.verifyInterval'?: number
+
+    /**
+     * 每个用户各自的备份目录配置（JSON 数组，由前端管理），结构见 OpenlistUserBackup
+     */
+    'openlist.userBackups'?: string
 
     /**
      * 是否启用本地配置备份（每日一份 config.js 副本，保留指定天数）

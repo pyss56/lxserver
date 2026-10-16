@@ -189,6 +189,14 @@
                 </a>
 
 
+                <a href="#" class="nav-item" data-view="openlist">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                    </svg>
+                    <span>OpenList 配置</span>
+                </a>
+
+
                 <a href="#" class="nav-item" data-view="backups">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
@@ -2067,6 +2075,109 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- OpenList 备份配置视图 -->
+                <div id="view-openlist" class="view">
+                    <div class="webdav-container">
+                        <div class="setup-guide-card glass">
+                            <h3>OpenList 音频备份配置</h3>
+                            <p>配置 OpenList 网盘连接与按用户备份规则。启用后，所选用户缓存 / 下载的音频将自动上传到 OpenList 并跟踪上传状态（待上传 → 上传中 → 上传完成 → 已验证）。</p>
+                        </div>
+                        <form id="openlist-form" class="config-form-openlist">
+                            <div class="config-card glass">
+                                <div class="config-card-header">
+                                    <div class="config-card-icon" style="background: linear-gradient(135deg, #6366f1, #06b6d4);">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+                                    </div>
+                                    <div>
+                                        <h3 class="config-card-title">OpenList 连接</h3>
+                                        <p class="config-card-desc">账号与服务器</p>
+                                    </div>
+                                </div>
+                                <div class="config-card-body">
+                                    <div class="config-toggle-row">
+                                        <div class="config-toggle-info">
+                                            <span class="config-toggle-label">启用 OpenList 音频备份</span>
+                                            <span class="config-toggle-desc">开启后按用户配置备份音频文件</span>
+                                        </div>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" name="openlist.enable" id="openlist-enable" />
+                                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                        </label>
+                                    </div>
+                                    <div id="openlist-options" style="display:none;">
+                                        <div class="config-divider"></div>
+                                        <div class="config-field">
+                                            <label class="config-label">OpenList 服务器地址</label>
+                                            <input type="text" name="openlist.endpoint" class="form-input config-input" placeholder="http://127.0.0.1:5244" />
+                                        </div>
+                                        <div class="config-field-row">
+                                            <div class="config-field">
+                                                <label class="config-label">账号</label>
+                                                <input type="text" name="openlist.username" class="form-input config-input" />
+                                            </div>
+                                            <div class="config-field">
+                                                <label class="config-label">密码</label>
+                                                <input type="password" name="openlist.password" class="form-input config-input" />
+                                            </div>
+                                        </div>
+                                        <div class="config-field">
+                                            <label class="config-label">预置令牌（可选，优先于账号密码）</label>
+                                            <input type="text" name="openlist.token" class="form-input config-input" placeholder="openlist-xxxx" />
+                                        </div>
+                                        <div class="config-field">
+                                            <label class="config-label">根目录（OpenList 挂载名）</label>
+                                            <input type="text" name="openlist.root" class="form-input config-input" placeholder="/tyCloud" />
+                                            <small class="config-hint">OpenList 中的挂载路径，例如天翼云盘为 /tyCloud</small>
+                                        </div>
+                                        <div class="config-field-row">
+                                            <div class="config-field">
+                                                <label class="config-label">验证轮询间隔（分钟）</label>
+                                                <input type="number" name="openlist.verifyInterval" class="form-input config-input" value="5" min="1" />
+                                                <small class="config-hint">轮询确认文件已落库后标记为「已验证」</small>
+                                            </div>
+                                            <div class="config-toggle-row" style="flex:1;">
+                                                <div class="config-toggle-info">
+                                                    <span class="config-toggle-label">上传后保留本地文件</span>
+                                                </div>
+                                                <label class="toggle-switch">
+                                                    <input type="checkbox" name="openlist.keepLocalAfterUpload" />
+                                                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                                </label>
+                                            </div>
+                                            <div class="config-toggle-row" style="flex:1;">
+                                                <div class="config-toggle-info">
+                                                    <span class="config-toggle-label">备份目录中的图片等非音频文件</span>
+                                                    <small class="config-hint" style="display:block;">开启后，下载 / 缓存目录里的图片也会一并上传</small>
+                                                </div>
+                                                <label class="toggle-switch">
+                                                    <input type="checkbox" name="openlist.includeNonAudio" />
+                                                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="config-divider"></div>
+                                        <div class="config-field">
+                                            <label class="config-label">备份用户（多选）</label>
+                                            <small class="config-hint">选择开启音频备份的用户；每个用户可单独配置下载 / 缓存目录</small>
+                                            <div id="tag-group-openlist-users" class="tag-group-container"></div>
+                                            <input type="hidden" name="openlist.userBackupUsers" />
+                                        </div>
+                                        <div id="openlist-user-dirs" style="margin-top:.5rem;"></div>
+                                    </div>
+                                    <div id="openlist-disabled-hint" style="display:none;">
+                                        <div class="config-divider"></div>
+                                        <p style="color:var(--text-secondary);text-align:center;padding:1rem 0;">请先开启 OpenList 音频备份以配置详细参数</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="config-actions">
+                                <button type="button" class="btn-primary" onclick="app.saveOpenlistConfig()">保存配置</button>
+                                <button type="button" class="btn-secondary" onclick="app.loadOpenlistConfig()">重新加载</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
 

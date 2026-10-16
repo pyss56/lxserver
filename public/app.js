@@ -494,6 +494,7 @@ class App {
             config: '系统配置',
             logs: '系统日志',
             webdav: 'WebDAV同步',
+            openlist: 'OpenList 配置',
             files: '文件管理',
             snapshots: '快照管理',
             about: '关于'
@@ -528,6 +529,9 @@ class App {
                 } catch (e) {
                     console.error('Failed to check webdav status:', e);
                 }
+                break;
+            case 'openlist':
+                this.loadOpenlistConfig();
                 break;
             case 'backups':
             case 'snapshots':
@@ -3170,6 +3174,119 @@ class App {
         };
         const allItems = ['kw', 'tx', 'wy', 'mg', 'kg'];
         this.renderSortableTagGroup('tag-group-source-priority', 'subsonic.source.priority', list, labelMap, allItems);
+    }
+
+    // ===== OpenList 音频备份配置 =====
+    async loadOpenlistConfig() {
+        try {
+            const config = await this.request('/api/config')
+            const form = document.getElementById('openlist-form')
+            if (!form) return
+            form.elements['openlist.enable'].checked = config['openlist.enable'] === true
+            form.elements['openlist.endpoint'].value = config['openlist.endpoint'] || ''
+            form.elements['openlist.username'].value = config['openlist.username'] || ''
+            form.elements['openlist.password'].value = config['openlist.password'] || ''
+            form.elements['openlist.token'].value = config['openlist.token'] || ''
+            form.elements['openlist.root'].value = config['openlist.root'] || '/tyCloud'
+            form.elements['openlist.keepLocalAfterUpload'].checked = config['openlist.keepLocalAfterUpload'] !== false
+            form.elements['openlist.includeNonAudio'].checked = config['openlist.includeNonAudio'] === true
+            form.elements['openlist.verifyInterval'].value = config['openlist.verifyInterval'] || 5
+            this.toggleOpenlistVisibility()
+            form.elements['openlist.enable'].onchange = () => this.toggleOpenlistVisibility()
+
+            let users = []
+            try {
+                const ulist = await this.request('/api/users')
+                users = (ulist || []).map(u => u.name).filter(Boolean)
+            } catch (e) { console.warn('获取用户列表失败', e) }
+            this.renderOpenlistUserConfig(users, config['openlist.userBackups'])
+        } catch (e) {
+            console.error(e)
+            if (window.showError) window.showError('加载 OpenList 配置失败: ' + (e && e.message || e))
+        }
+    }
+
+    async saveOpenlistConfig() {
+        const form = document.getElementById('openlist-form')
+        if (!form) return
+        const fd = new FormData(form)
+        const cfg = {
+            'openlist.enable': fd.get('openlist.enable') === 'on',
+            'openlist.endpoint': (fd.get('openlist.endpoint') || '').trim(),
+            'openlist.username': fd.get('openlist.username'),
+            'openlist.password': fd.get('openlist.password'),
+            'openlist.token': fd.get('openlist.token'),
+            'openlist.root': (fd.get('openlist.root') || '').trim() || '/tyCloud',
+            'openlist.keepLocalAfterUpload': fd.get('openlist.keepLocalAfterUpload') === 'on',
+            'openlist.includeNonAudio': fd.get('openlist.includeNonAudio') === 'on',
+            'openlist.verifyInterval': parseInt(fd.get('openlist.verifyInterval')) || 5,
+            'openlist.userBackups': this.collectOpenlistUserBackups(),
+        }
+        try {
+            await this.request('/api/config', { method: 'POST', body: JSON.stringify(cfg) })
+            if (window.showSuccess) window.showSuccess('OpenList 配置已保存')
+            else alert('OpenList 配置已保存')
+        } catch (e) {
+            console.error(e)
+            if (window.showError) window.showError('保存失败: ' + (e && e.message || e))
+        }
+    }
+
+    toggleOpenlistVisibility() {
+        const form = document.getElementById('openlist-form')
+        const enabled = !!(form && form.elements['openlist.enable'] && form.elements['openlist.enable'].checked)
+        const opts = document.getElementById('openlist-options')
+        const hint = document.getElementById('openlist-disabled-hint')
+        if (opts) opts.style.display = enabled ? 'block' : 'none'
+        if (hint) hint.style.display = enabled ? 'none' : 'block'
+    }
+
+    renderOpenlistUserConfig(users, userBackupsRaw) {
+        let backups = []
+        try { backups = JSON.parse(userBackupsRaw || '[]') } catch {}
+        const selected = backups.map(b => b.user)
+        const labelMap = {}
+        users.forEach(u => { labelMap[u] = u })
+        this.renderSortableTagGroup('tag-group-openlist-users', 'openlist.userBackupUsers', selected, labelMap, users)
+        const container = document.getElementById('tag-group-openlist-users')
+        if (container) container.onclick = () => setTimeout(() => this.renderOpenlistUserDirs(backups), 0)
+        this.renderOpenlistUserDirs(backups)
+    }
+
+    renderOpenlistUserDirs(backups) {
+        const hidden = document.querySelector('input[name="openlist.userBackupUsers"]')
+        const selected = (hidden && hidden.value ? hidden.value.split(',').map(s => s.trim()).filter(Boolean) : [])
+        const dirsContainer = document.getElementById('openlist-user-dirs')
+        if (!dirsContainer) return
+        const map = {}
+        ;(backups || []).forEach(b => { map[b.user] = b })
+        const prev = {}
+        selected.forEach(u => {
+            const d = document.getElementById('openlist-dir-' + u + '-download')
+            const c = document.getElementById('openlist-dir-' + u + '-cache')
+            prev[u] = { download: d ? d.value : '', cache: c ? c.value : '' }
+        })
+        dirsContainer.innerHTML = selected.map(u => {
+            const tpl = map[u] || {}
+            const dl = (prev[u] ? prev[u].download : (tpl.downloadDir || ''))
+            const ca = (prev[u] ? prev[u].cache : (tpl.cacheDir || ''))
+            return '<div class="config-field" style="border-left:3px solid var(--accent);padding-left:.75rem;margin-top:.5rem">' +
+                '<label class="config-label">用户 <b>' + u + '</b> 的备份目录</label>' +
+                '<div class="config-field-row">' +
+                '<div class="config-field"><label class="config-label">下载目录</label><input type="text" id="openlist-dir-' + u + '-download" class="form-input config-input" value="' + (dl || '').replace(/"/g, '&quot;') + '" placeholder="留空=默认该用户音乐目录"></div>' +
+                '<div class="config-field"><label class="config-label">缓存目录</label><input type="text" id="openlist-dir-' + u + '-cache" class="form-input config-input" value="' + (ca || '').replace(/"/g, '&quot;') + '" placeholder="留空=默认该用户缓存目录"></div>' +
+                '</div></div>'
+        }).join('')
+    }
+
+    collectOpenlistUserBackups() {
+        const hidden = document.querySelector('input[name="openlist.userBackupUsers"]')
+        const selected = (hidden && hidden.value ? hidden.value.split(',').map(s => s.trim()).filter(Boolean) : [])
+        return JSON.stringify(selected.map(u => {
+            const d = document.getElementById('openlist-dir-' + u + '-download')
+            const c = document.getElementById('openlist-dir-' + u + '-cache')
+            return { user: u, enabled: true, downloadDir: (d ? d.value : '').trim(), cacheDir: (c ? c.value : '').trim() }
+        }))
     }
 
     togglePublicNonAdminAccessVisibility() {

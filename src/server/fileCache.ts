@@ -11,6 +11,7 @@ const { MusicTagger, MetaPicture } = require('music-tag-native')
 import { buildLyrics, parseLyrics } from '../utils/lrcTool'
 import { formatPlayTime } from '../utils/common'
 import { getUserSpace } from '../user'
+import { onFileCached as openlistBackupOnFileCached } from './openlistBackup'
 
 // --- Cache Naming Patterns ---
 export const CACHE_NAMING_PATTERNS = {
@@ -2528,6 +2529,19 @@ export const downloadAndCache = async (songInfo: any, url: string, quality?: str
                         bitDepth: inspection.bitDepth,
                         nativeIds: extractNativeIds(songInfo)
                     }, folderType)
+
+                    // [OpenList 备份] 音频落盘后触发备份（按 per-user 配置判定是否上传）
+                    if ((globalThis as any).lx?.config?.['openlist.enable']) {
+                        try {
+                            openlistBackupOnFileCached(normalizedUsername, folderType, finalPath, {
+                                source: metadata.source,
+                                songmid: id,
+                                quality: actualQuality,
+                            })
+                        } catch (e) {
+                            console.warn('[openlist-backup] 落盘钩子异常:', e)
+                        }
+                    }
 
                     let tagger: any
                     let metadataWritable = false
