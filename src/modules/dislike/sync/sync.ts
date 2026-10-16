@@ -40,7 +40,8 @@ const setLocalList = async(socket: LX.Socket, listData: LX.Dislike.DislikeRules)
 }
 
 const overwriteRemoteListData = async(socket: LX.Socket, listData: LX.Dislike.DislikeRules, key: string, excludeIds: string[] = []) => {
-  const action = { action: 'dislike_data_overwrite', data: listData } as const
+  const rulesString = toRulesString(listData)
+  const action = { action: 'dislike_data_overwrite', data: rulesString } as any
   const tasks: Array<Promise<void>> = []
   const userSpace = getUserSpace(socket.userInfo.name)
   socket.broadcast((client) => {
@@ -58,7 +59,8 @@ const overwriteRemoteListData = async(socket: LX.Socket, listData: LX.Dislike.Di
   await Promise.all(tasks)
 }
 const setRemotelList = async(socket: LX.Socket, listData: LX.Dislike.DislikeRules, key: string): Promise<void> => {
-  await socket.remoteQueueDislike.dislike_sync_set_list_data(listData)
+  const rulesString = toRulesString(listData)
+  await socket.remoteQueueDislike.dislike_sync_set_list_data(rulesString as any)
   const userSpace = getUserSpace(socket.userInfo.name)
   await userSpace.dislikeManage.updateDeviceSnapshotKey(socket.keyInfo.clientId, key)
 }

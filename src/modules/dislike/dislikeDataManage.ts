@@ -112,9 +112,27 @@ export class DislikeDataManage {
   }
 
   overwirteDislikeInfo = async(rulesString: string) => {
-    // Called when removing items: keep only entries whose rule key is still in the string
     const validRules = new Set(filterRules(rulesString))
-    this.dislikeRules.dislikeList = this.dislikeRules.dislikeList.filter(item => validRules.has(this.buildDislikeRule(item)))
+    const existingMap = new Map<string, LX.Dislike.DislikeSongInfo>()
+    for (const item of this.dislikeRules.dislikeList) {
+      const r = this.buildDislikeRule(item)
+      if (r && validRules.has(r)) {
+        existingMap.set(r, item)
+      }
+    }
+    const newDislikeList: LX.Dislike.DislikeSongInfo[] = []
+    for (const r of validRules) {
+      if (existingMap.has(r)) {
+        newDislikeList.push(existingMap.get(r)!)
+      } else {
+        newDislikeList.push({
+          name: '',
+          singer: '',
+          dislikeRule: r,
+        })
+      }
+    }
+    this.dislikeRules.dislikeList = newDislikeList
     return this.dislikeRules
   }
 }

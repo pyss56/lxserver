@@ -74,12 +74,70 @@ export const parseIntervalMs = (value: string | number | undefined | null): numb
  */
 const formatSongItem = (song: any, defaultSource: string) => {
   if (!song) return song
+
+  const source = song.source || defaultSource
+  // 如果本身已经是具备有效 meta 的新格式 MusicInfo，直接返回规范化对象
+  if (song.meta && typeof song.meta === 'object' && song.meta.songId !== undefined) {
+    return {
+      ...song,
+      source,
+      id: song.id ? String(song.id) : (song.meta.songId ? `${source}_${song.meta.songId}` : String(song.songmid || '')),
+    }
+  }
+
+  const songmid = song.songmid ?? song.songId ?? song.id ?? ''
+  const meta: Record<string, any> = {
+    songId: songmid,
+    albumName: song.albumName ?? song.album?.name ?? '',
+    picUrl: song.img ?? song.pic ?? song.picUrl ?? '',
+    qualitys: song.types ?? [],
+    _qualitys: song._types ?? {},
+    albumId: song.albumId ?? song.album?.id ?? song.albumMid ?? song.album?.mid ?? '',
+  }
+
+  let id = song.id ? String(song.id) : `${source}_${songmid}`
+
+  if (meta._qualitys && meta._qualitys.flac32bit && !meta._qualitys.flac24bit) {
+    meta._qualitys.flac24bit = meta._qualitys.flac32bit
+    delete meta._qualitys.flac32bit
+    if (Array.isArray(meta.qualitys)) {
+      meta.qualitys = meta.qualitys.map((quality: any) => {
+        if (quality && quality.type === 'flac32bit') return { ...quality, type: 'flac24bit' }
+        return quality
+      })
+    }
+  }
+
+  switch (source) {
+    case 'kg':
+      if (song.hash) {
+        meta.hash = song.hash
+        id = `${songmid}_${song.hash}`
+      }
+      break
+    case 'tx':
+      meta.strMediaMid = song.strMediaMid ?? ''
+      meta.albumMid = song.albumMid ?? song.album?.mid ?? ''
+      if (song.songId) meta.id = song.songId
+      break
+    case 'mg':
+      meta.copyrightId = song.copyrightId ?? ''
+      meta.lrcUrl = song.lrcUrl ?? ''
+      meta.mrcUrl = song.mrcUrl ?? ''
+      meta.trcUrl = song.trcUrl ?? ''
+      break
+  }
+
   return {
-    ...song,
-    source: song.source || defaultSource,
-    id: song.id ? String(song.id) : (song.songmid ? String(song.songmid) : ''),
+    id,
+    name: song.name || '',
+    singer: song.singer || '',
+    source,
+    interval: song.interval || '',
+    meta,
   }
 }
+
 
 /**
  * 执行网络歌单对比检测
@@ -158,7 +216,7 @@ export const checkAllUsersNetworkLists = async (): Promise<{
 
           // 规范化 ID 后排序拼接比较：顺序无关，且保留重复项（不做 Set 去重避免误判）
           const normalizeIds = (list: any[]) =>
-            list.map((s: any) => String(s.id || s.songmid || '').trim()).sort().join('|')
+            list.map((s: any) => String(s.id || s.songmid || s.meta?.songId || '').trim()).sort().join('|')
           const sameIds = normalizeIds(remoteList) === normalizeIds(localList)
 
           if (!sameIds) {

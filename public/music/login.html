@@ -768,6 +768,8 @@
             localStorage.removeItem('lx_sync_pass');
             localStorage.removeItem('lx_sync_mode');
             localStorage.removeItem('lx_user_token');
+            sessionStorage.removeItem('lx_login_bounce_cnt');
+            sessionStorage.removeItem('lx_login_bounce_time');
             const errorDiv = document.getElementById('auth-error');
             const errorMsg = document.getElementById('auth-error-msg');
             errorDiv.classList.remove('hidden', 'bg-rose-950/50', 'border-rose-500/30', 'text-rose-300');
@@ -784,6 +786,28 @@
         (async () => {
             initTheme();
             initFloatingNotes();
+
+            // 重定向死循环熔断保护：如果短时间内连续从播放器跳回本登录页，停止自动跳转并停留在登录页供用户手动操作
+            const bounceKey = 'lx_login_bounce_cnt';
+            const bounceTimeKey = 'lx_login_bounce_time';
+            const now = Date.now();
+            const lastBounce = parseInt(sessionStorage.getItem(bounceTimeKey) || '0', 10);
+            let bounceCount = parseInt(sessionStorage.getItem(bounceKey) || '0', 10);
+            if (now - lastBounce < 5000) {
+                bounceCount++;
+            } else {
+                bounceCount = 0;
+            }
+            sessionStorage.setItem(bounceTimeKey, String(now));
+            sessionStorage.setItem(bounceKey, String(bounceCount));
+
+            if (bounceCount >= 2) {
+                console.warn('[Login] 检测到连续重定向，已停止自动恢复，请在当前页面重新登录。');
+                sessionStorage.removeItem(bounceKey);
+                sessionStorage.removeItem(bounceTimeKey);
+                return;
+            }
+
             const setPlayerName = (name) => {
                 if (!name) return;
                 document.title = `${name} - 登录`;
@@ -901,6 +925,9 @@
                         // 移除本地明文密码存储
                         localStorage.removeItem('lx_sync_pass');
                     }
+
+                    sessionStorage.removeItem('lx_login_bounce_cnt');
+                    sessionStorage.removeItem('lx_login_bounce_time');
 
                     // 优雅缩放淡出跳转
                     card.style.transform = 'scale(0.95)';

@@ -38,8 +38,12 @@ export class DislikeEvent extends EventEmitter {
    */
   async dislike_data_overwrite(userName: string, dislikeData: LX.Dislike.DislikeRules, isRemote: boolean = false) {
     const userSpace = getUserSpace(userName)
-    // Convert structured DislikeListData back to rule-string for the overwrite filter
-    const rulesString = dislikeData.dislikeList.map(s => s.dislikeRule ?? '').filter(Boolean).join('\n')
+    // Convert structured DislikeListData or raw string back to rule-string for the overwrite filter
+    const rulesString = typeof dislikeData === 'string'
+      ? dislikeData
+      : (dislikeData && Array.isArray(dislikeData.dislikeList)
+        ? dislikeData.dislikeList.map(s => s.dislikeRule ?? '').filter(Boolean).join('\n')
+        : '')
     await userSpace.dislikeManage.dislikeDataManage.overwirteDislikeInfo(rulesString)
     this.emit('dislike_data_overwrite', userName, dislikeData, isRemote)
     dislikeUpdated()

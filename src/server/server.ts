@@ -209,6 +209,23 @@ async function fetchArtistPicShared(source: string, id: string | number): Promis
 /** 生成随机 sessionId */
 const generateSessionId = () => crypto.randomBytes(32).toString('hex')
 
+/** 判断请求是否处于 HTTPS 安全上下文 (直接 TLS 或经过反向代理 TLS) */
+const isHttpsRequest = (req: IncomingMessage): boolean => {
+  if ((req.socket as any)?.encrypted || (req.connection as any)?.encrypted) return true
+  const fwdProto = req.headers['x-forwarded-proto']
+  if (fwdProto) {
+    const protoStr = Array.isArray(fwdProto) ? fwdProto[0] : fwdProto
+    if (protoStr.split(',')[0].trim().toLowerCase() === 'https') return true
+  }
+  return false
+}
+
+/** 生成 Player Session Cookie 响应头 (仅在 HTTPS 下附加 Secure 标记，避免 HTTP 环境下 Cookie 被现代浏览器丢弃) */
+const buildSessionCookieHeader = (req: IncomingMessage, sessionId: string, maxAge: number): string => {
+  const secureAttr = isHttpsRequest(req) ? '; Secure' : ''
+  return `${SESSION_COOKIE_NAME}=${sessionId}; HttpOnly; Path=/; SameSite=Lax${secureAttr}; Max-Age=${maxAge}`
+}
+
 /** 解析 Cookie 字符串 */
 const parseCookies = (cookieHeader: string | undefined): Record<string, string> => {
   if (!cookieHeader) return {}
@@ -5955,7 +5972,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
                 loginLog.info(`Player guest login success from ${ip}`)
                 res.writeHead(200, {
                   'Content-Type': 'application/json',
-                  'Set-Cookie': `${SESSION_COOKIE_NAME}=${sessionId}; HttpOnly; Path=/; SameSite=Lax; Secure; Max-Age=${SESSION_TTL / 1000}`
+                  'Set-Cookie': buildSessionCookieHeader(req, sessionId, SESSION_TTL / 1000)
                 })
                 res.end(JSON.stringify({
                   success: true,
@@ -5982,7 +5999,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               userSessions.set(userToken, { username: matchedUser.name, createdAt: Date.now() })
               res.writeHead(200, {
                 'Content-Type': 'application/json',
-                'Set-Cookie': `${SESSION_COOKIE_NAME}=${sessionId}; HttpOnly; Path=/; SameSite=Lax; Secure; Max-Age=${SESSION_TTL / 1000}`
+                'Set-Cookie': buildSessionCookieHeader(req, sessionId, SESSION_TTL / 1000)
               })
               res.end(JSON.stringify({
                 success: true,
@@ -6010,7 +6027,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         if (sessionId) playerSessions.delete(sessionId)
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `${SESSION_COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax; Secure; Max-Age=0`
+          'Set-Cookie': buildSessionCookieHeader(req, '', 0)
         })
         res.end(JSON.stringify({ success: true }))
         return
@@ -6018,8 +6035,26 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
 
       // [新增] Web播放器认证状态检查 API
       if (pathname === '/api/music/auth/verify' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ valid: checkPlayerAuth(req) }))
+        const isValid = checkPlayerAuth(req)
+        const responseHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache'
+        }
+        if (isValid) {
+          // 若当前请求没有有效 Session Cookie（例如通过 x-user-token 凭据静默恢复），
+          // 则立即补发 Session Cookie，确保随后跳转页面能够顺利通过文档级路由认证
+          const cookies = parseCookies(req.headers['cookie'])
+          const sessionId = cookies[SESSION_COOKIE_NAME]
+          const existingSession = sessionId ? playerSessions.get(sessionId) : null
+          if (!existingSession || Date.now() - existingSession.createdAt > SESSION_TTL) {
+            const user = verifyUserAuth(req)
+            const newSessionId = generateSessionId()
+            playerSessions.set(newSessionId, { createdAt: Date.now(), user: user || null })
+            responseHeaders['Set-Cookie'] = buildSessionCookieHeader(req, newSessionId, SESSION_TTL / 1000)
+          }
+        }
+        res.writeHead(200, responseHeaders)
+        res.end(JSON.stringify({ valid: isValid }))
         return
       }
 
