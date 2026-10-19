@@ -123,8 +123,13 @@ export function getBackupDb(): DatabaseSync {
     size INTEGER,
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    UNIQUE(user, folder_type, local_path)
   )`)
+  // 老库兼容：补齐附件唯一约束（已存在重复行则忽略，手动 upsert 仍能去重）
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_ol_att_uniq ON openlist_backup_attachments(user, folder_type, local_path)')
+  } catch { /* 列已存在或存在重复行，忽略 */ }
   dbInstance = db
   return db
 }
@@ -226,21 +231,25 @@ export function upsertAttachment(input: UpsertAttachmentInput): AttachmentRow {
   const db = getBackupDb()
   const now = Date.now()
   const status = input.status ?? 'pending'
-  const stmt = db.prepare(`INSERT INTO openlist_backup_attachments
+  const localPath = input.localPath ?? null
+  // 附件表未声明 (user, folder_type, local_path) 唯一约束，不能依赖 ON CONFLICT；改为先查后写。
+  const existing = localPath ? getAttachmentByLocalPath(input.user, input.folderType, localPath) : null
+  if (existing) {
+    db.prepare(`UPDATE openlist_backup_attachments SET
+      backup_file_id = ?, user = ?, folder_type = ?, local_path = ?, remote_path = ?,
+      category = ?, size = ?, status = ?, updated_at = ?
+      WHERE id = ?`).run(
+      input.backupFileId, input.user, input.folderType, localPath, input.remotePath,
+      input.category ?? 'image', input.size ?? null, status, now, existing.id)
+    return getAttachmentByLocalPath(input.user, input.folderType, localPath!)!
+  }
+  const info = db.prepare(`INSERT INTO openlist_backup_attachments
     (backup_file_id, user, folder_type, local_path, remote_path, category, size, status, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(user, folder_type, local_path) DO UPDATE SET
-      remote_path = excluded.remote_path,
-      category = excluded.category,
-      size = excluded.size,
-      status = excluded.status,
-      updated_at = excluded.updated_at`)
-  stmt.run(
-    input.backupFileId, input.user, input.folderType,
-    input.localPath ?? null, input.remotePath, input.category ?? 'image',
-    input.size ?? null, status, now,
-  )
-  return getAttachmentByLocalPath(input.user, input.folderType, input.localPath!)!
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    input.backupFileId, input.user, input.folderType, localPath, input.remotePath,
+    input.category ?? 'image', input.size ?? null, status, now)
+  const id = Number((info as any).lastInsertRowid)
+  return getAttachmentByLocalPath(input.user, input.folderType, localPath!)!
 }
 
 export function setAttachmentStatus(

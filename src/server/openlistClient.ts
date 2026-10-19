@@ -128,7 +128,9 @@ export class OpenListClient {
     const headers: Record<string, string> = {
       ...this.authHeader(),
       'Content-Type': 'application/octet-stream',
-      'file-path': remotePath,
+      // HTTP 头值必须是 Latin-1(ByteString)，含中文等非 ASCII 路径需先按 UTF-8 字节映射为 Latin-1，
+      // 服务端再以 UTF-8 还原，否则 fetch 会抛 "Cannot convert argument to a ByteString" 导致上传失败。
+      'file-path': Buffer.from(remotePath, 'utf8').toString('latin1'),
       overwrite: 'true',
       password: '',
       'last-modified': goTime(),
