@@ -2120,6 +2120,15 @@
                 <!-- OpenList 备份配置视图 -->
                 <div id="view-openlist" class="view">
                     <div class="webdav-container">
+                        <div class="backup-segmented-tabs glass" style="margin-bottom:1rem;">
+                            <button type="button" class="backup-tab-btn active" id="tab-btn-openlist-config" onclick="app.switchOpenlistTab('config')">
+                                <span>备份配置</span>
+                            </button>
+                            <button type="button" class="backup-tab-btn" id="tab-btn-openlist-records" onclick="app.switchOpenlistTab('records')">
+                                <span>文件记录</span>
+                            </button>
+                        </div>
+                        <div id="openlist-pane-config" class="backup-tab-pane active">
                         <div class="setup-guide-card glass">
                             <h3>OpenList 音频备份配置</h3>
                             <p>配置 OpenList 网盘连接与按用户备份规则。启用后，所选用户的缓存 / 下载音频将按各自设定的同步模式处理。支持四种模式：上传（保留本地）、上传后删除本地、下载（远端→本地并补齐缓存）、双向同步。图片等非音频作为媒体文件附件一并处理。</p>
@@ -2219,7 +2228,9 @@
                                 <button type="button" class="btn-secondary" onclick="app.runOpenlistSync()">立即同步</button>
                             </div>
                         </form>
-                        <div class="config-card glass" style="margin-top:1.5rem;">
+                        </div><!-- /openlist-pane-config -->
+                        <div id="openlist-pane-records" class="backup-tab-pane">
+                        <div class="config-card glass" style="margin-top:0;">
                             <div class="config-card-header">
                                 <div class="config-card-icon" style="background: linear-gradient(135deg, #f59e0b, #ef4444);">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"></path><path d="M7 14l4-4 3 3 5-5"></path></svg>
@@ -2248,6 +2259,9 @@
                                         <option value="failed">失败</option>
                                         <option value="deleted">已删除</option>
                                     </select>
+                                    <input type="text" id="olb-filter-name" class="form-input config-input" style="width:auto;min-width:150px;" placeholder="文件名模糊" oninput="app.scheduleOpenlistReload()" />
+                                    <input type="text" id="olb-filter-path" class="form-input config-input" style="width:auto;min-width:150px;" placeholder="路径包含" oninput="app.scheduleOpenlistReload()" />
+                                    <button type="button" class="btn-secondary" style="padding:.3rem .7rem;font-size:.8rem;" onclick="app.clearOpenlistFilters()">清除筛选</button>
                                     <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem;color:var(--text-secondary);cursor:pointer;">
                                         <input type="checkbox" id="olb-autorefresh" onchange="app.toggleOpenlistAutoRefresh()" /> 自动刷新
                                     </label>
@@ -2255,6 +2269,7 @@
                                 <div id="openlist-backups-list"><div class="config-hint">点击「刷新」查看备份记录</div></div>
                             </div>
                         </div>
+                        </div><!-- /openlist-pane-records -->
                     </div>
                 </div>
 

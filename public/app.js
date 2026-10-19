@@ -3246,14 +3246,27 @@ class App {
             const fu = document.getElementById('olb-filter-user')
             const ff = document.getElementById('olb-filter-folder')
             const fs2 = document.getElementById('olb-filter-status')
+            const fn = document.getElementById('olb-filter-name')
+            const fp = document.getElementById('olb-filter-path')
             const uv = fu ? fu.value : ''
             const fv = ff ? ff.value : ''
             const sv = fs2 ? fs2.value : ''
-            list = list.filter(f =>
-                (!uv || f.user === uv) &&
-                (!fv || f.folder_type === fv) &&
-                (!sv || f.status === sv)
-            )
+            const qn = (fn && fn.value ? fn.value : '').trim().toLowerCase()
+            const qp = (fp && fp.value ? fp.value : '').trim().toLowerCase()
+            list = list.filter(f => {
+                if (uv && f.user !== uv) return false
+                if (fv && f.folder_type !== fv) return false
+                if (sv && f.status !== sv) return false
+                if (qn) {
+                    const hay = ((f.name || '') + ' ' + (f.local_path || '') + ' ' + (f.remote_path || '')).toLowerCase()
+                    if (!hay.includes(qn)) return false
+                }
+                if (qp) {
+                    const hay = ((f.local_path || '') + ' ' + (f.remote_path || '')).toLowerCase()
+                    if (!hay.includes(qp)) return false
+                }
+                return true
+            })
             if (!list.length) {
                 box.innerHTML = '<div class="config-hint">暂无符合条件的备份记录</div>'
                 return
@@ -3267,7 +3280,7 @@ class App {
                 if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
                 return (n / 1024 / 1024).toFixed(1) + ' MB'
             }
-            const rows = list.slice(0, 500).map(f => {
+            const rows = list.slice(0, 2000).map(f => {
                 const d = new Date(f.updated_at || f.created_at || Date.now())
                 const color = badgeColor[f.status] || '#64748b'
                 const label = statusMap[f.status] || f.status || ''
@@ -3319,6 +3332,33 @@ class App {
         if (cb && cb.checked) {
             this._olbTimer = setInterval(() => this.loadOpenlistBackups(true), 10000)
         }
+    }
+
+    switchOpenlistTab(name) {
+        const map = {
+            config: ['tab-btn-openlist-config', 'openlist-pane-config'],
+            records: ['tab-btn-openlist-records', 'openlist-pane-records'],
+        }
+        for (const [btnId, paneId] of Object.values(map)) {
+            const b = document.getElementById(btnId); if (b) b.classList.remove('active')
+            const p = document.getElementById(paneId); if (p) p.classList.remove('active')
+        }
+        const [btnId, paneId] = map[name] || map.config
+        const b = document.getElementById(btnId); if (b) b.classList.add('active')
+        const p = document.getElementById(paneId); if (p) p.classList.add('active')
+        if (name === 'records') this.loadOpenlistBackups()
+    }
+
+    scheduleOpenlistReload() {
+        if (this._olbReloadTimer) clearTimeout(this._olbReloadTimer)
+        this._olbReloadTimer = setTimeout(() => this.loadOpenlistBackups(), 300)
+    }
+
+    clearOpenlistFilters() {
+        ['olb-filter-user', 'olb-filter-folder', 'olb-filter-status', 'olb-filter-name', 'olb-filter-path'].forEach((id) => {
+            const el = document.getElementById(id); if (el) el.value = ''
+        })
+        this.loadOpenlistBackups()
     }
 
     togglePublicNonAdminAccessVisibility() {
