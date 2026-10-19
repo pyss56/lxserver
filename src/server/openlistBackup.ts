@@ -30,6 +30,7 @@ import {
   setAttachmentStatus,
   countRefsToLocalPath,
   listAttachmentsToVerify,
+  listAttachmentsByStatus,
   getBackupById,
 } from './openlistBackupDb'
 
@@ -295,6 +296,49 @@ async function uploadAttachment(att: any, cl: OpenListClient): Promise<void> {
   }
 }
 
+// ---------- 并发上传队列 ----------
+// 播放整张歌单会瞬间触发数十个上传，直接并发会把 OpenList（云盘挂载）打挂导致大量 hang。
+// 这里限制同时进行的上传数量，失败/完成后自动推进下一个；并用 enqueuedIds 防止重复入队。
+const MAX_CONCURRENT_UPLOADS = 2
+const uploadQueue: Array<{ kind: 'file' | 'att'; id: number; row: any; cl: OpenListClient; mode?: SyncMode }> = []
+const enqueuedIds = new Set<string>()
+let activeUploads = 0
+
+function enqueueUpload(row: any, cl: OpenListClient, mode: SyncMode): void {
+  const key = `f:${row.id}`
+  if (enqueuedIds.has(key)) return
+  enqueuedIds.add(key)
+  uploadQueue.push({ kind: 'file', id: row.id, row, cl, mode })
+  pumpUploads()
+}
+
+function enqueueAttachment(att: any, cl: OpenListClient): void {
+  const key = `a:${att.id}`
+  if (enqueuedIds.has(key)) return
+  enqueuedIds.add(key)
+  uploadQueue.push({ kind: 'att', id: att.id, row: att, cl })
+  pumpUploads()
+}
+
+function pumpUploads(): void {
+  while (activeUploads < MAX_CONCURRENT_UPLOADS && uploadQueue.length) {
+    const job = uploadQueue.shift()!
+    activeUploads++
+    void (async () => {
+      try {
+        if (job.kind === 'file') await uploadOne(job.row, job.cl, job.mode!)
+        else await uploadAttachment(job.row, job.cl)
+      } catch {
+        /* uploadOne/uploadAttachment 内部已记录状态 */
+      } finally {
+        enqueuedIds.delete(job.kind === 'file' ? `f:${job.id}` : `a:${job.id}`)
+        activeUploads--
+        pumpUploads()
+      }
+    })()
+  }
+}
+
 /** 上传音频时，扫描其所在目录的图片/歌词等非音频文件，作为该媒体文件的附件一并上传 */
 function queueAttachmentsForFile(
   user: string,
@@ -331,7 +375,7 @@ function queueAttachmentsForFile(
       remotePath,
       category: categoryOf(ext),
     })
-    void uploadAttachment(att, cl)
+    enqueueAttachment(att, cl)
   }
 }
 
@@ -380,7 +424,7 @@ export function onFileCached(
     mode,
     status: 'pending',
   })
-  void uploadOne(row, cl, mode)
+  void enqueueUpload(row, cl, mode)
   if (cfg.includeNonAudio) {
     queueAttachmentsForFile(user, folderType, localPath, row, dir, cl, cfg)
   }
@@ -428,10 +472,22 @@ export async function verifyPending(): Promise<void> {
         if (mode === 'download' || mode === 'sync') {
           if (row.local_path) await downloadOne(row, cl, mode)
         } else {
-          if (row.local_path && fs.existsSync(row.local_path)) await uploadOne(row, cl, mode)
+          if (row.local_path && fs.existsSync(row.local_path)) enqueueUpload(row, cl, mode)
         }
       } catch { /* ignore */ }
     }
+    // 卡死回收：重启/并发打挂导致的 pending 或长时间 uploading 孤儿记录，重新入队重试
+    const STALE_MS = 10 * 60 * 1000
+    const now = Date.now()
+    for (const row of listBackupByStatus('pending')) enqueueUpload(row, cl, effectiveModeFromRow(row, cfg))
+    for (const row of listBackupByStatus('uploading')) {
+      if (now - (row.updated_at || 0) > STALE_MS) enqueueUpload(row, cl, effectiveModeFromRow(row, cfg))
+    }
+    for (const att of listAttachmentsByStatus('pending')) enqueueAttachment(att, cl)
+    for (const att of listAttachmentsByStatus('uploading')) {
+      if (now - (att.updated_at || 0) > STALE_MS) enqueueAttachment(att, cl)
+    }
+
     // 附件二次校验
     for (const att of listAttachmentsToVerify()) {
       try {
@@ -575,7 +631,7 @@ async function uploadDirection(
     const row = upsertBackupFile({
       user: entry.user, folderType, localPath: lp, remotePath, mode, status: 'pending',
     })
-    void uploadOne(row, cl, mode)
+    void enqueueUpload(row, cl, mode)
     summary.uploaded++
     if (cfg.includeNonAudio) {
       queueAttachmentsForFile(entry.user, folderType, lp, row, dir, cl, cfg)

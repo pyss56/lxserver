@@ -311,3 +311,9 @@ export function listAttachmentsToVerify(): AttachmentRow[] {
   const db = getBackupDb()
   return db.prepare("SELECT * FROM openlist_backup_attachments WHERE status IN ('uploading','completed')").all() as unknown as AttachmentRow[]
 }
+
+/** 按状态列出附件（用于卡死回收：pending / 长时间 uploading） */
+export function listAttachmentsByStatus(status: string): AttachmentRow[] {
+  const db = getBackupDb()
+  return db.prepare('SELECT * FROM openlist_backup_attachments WHERE status = ?').all(status) as unknown as AttachmentRow[]
+}

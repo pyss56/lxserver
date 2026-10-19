@@ -28,6 +28,10 @@ export interface OpenListFileInfo {
 
 const encodePath = (p: string) => p.split('/').map((s) => encodeURIComponent(s)).join('/')
 
+// 请求超时：防止连接挂起导致上传/下载永久卡死（曾出现大量 uploading/pending 孤儿记录）
+const META_TIMEOUT_MS = 30_000
+const TRANSFER_TIMEOUT_MS = 300_000
+
 // OpenList 的 last-modified 期望 Go 参考布局 "Jan 2, 2006 15:04:05 PM -07"，否则部分构建 PUT 返回 500
 function goTime(d = new Date()): string {
   const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]
@@ -62,6 +66,7 @@ export class OpenListClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: this.username, password: this.password }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
     })
     const data: any = await resp.json().catch(() => ({}))
     if (data?.code !== 200 || !data?.data?.token) {
@@ -87,6 +92,7 @@ export class OpenListClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.authHeader() },
       body: JSON.stringify({ path: p, password: '', page: 1, per_page: 100 }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
     })
     const data: any = await resp.json().catch(() => ({}))
     if (data?.code !== 200) throw new Error('OpenList 列目录失败：' + (data?.message || resp.status))
@@ -99,6 +105,7 @@ export class OpenListClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.authHeader() },
       body: JSON.stringify({ path: dir }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
     })
     const data: any = await resp.json().catch(() => ({}))
     if (data?.code !== 200 && !String(data?.message || '').toLowerCase().includes('exist')) {
@@ -139,7 +146,7 @@ export class OpenListClient {
       method: 'PUT',
       headers,
       body: buf,
-      signal,
+      signal: signal ?? AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
     })
     const text = await resp.text()
     let data: any = {}
@@ -157,6 +164,7 @@ export class OpenListClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.authHeader() },
       body: JSON.stringify({ path: remotePath, password: '' }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
     })
     const data: any = await resp.json().catch(() => ({}))
     if (data?.code !== 200) throw new Error('OpenList 获取文件信息失败：' + (data?.message || resp.status))
@@ -177,6 +185,7 @@ export class OpenListClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.authHeader() },
       body: JSON.stringify({ dir, names: [name] }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
     })
     const data: any = await resp.json().catch(() => ({}))
     if (data?.code !== 200) throw new Error('OpenList 删除失败：' + (data?.message || resp.status))
@@ -225,7 +234,7 @@ export class OpenListClient {
     const info = await this.getFileInfo(remotePath)
     const url = info.rawUrl
     if (!url) throw new Error('OpenList 无法获取下载直链：' + remotePath)
-    const resp = await fetch(url, { signal })
+    const resp = await fetch(url, { signal: signal ?? AbortSignal.timeout(TRANSFER_TIMEOUT_MS) })
     if (!resp.ok) throw new Error('OpenList 下载失败：' + resp.status)
     await new Promise<void>((resolve, reject) => {
       const ws = fs.createWriteStream(localPath)
