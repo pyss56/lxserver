@@ -2200,7 +2200,7 @@
                                         <div class="config-divider"></div>
                                         <div class="config-field">
                                             <label class="config-label">备份用户（多选）</label>
-                                            <small class="config-hint">选择开启音频备份的用户；每个用户可单独配置下载 / 缓存目录</small>
+                                            <small class="config-hint">选择开启音频备份的用户；每个用户可单独开关下载 / 缓存目录备份（路径自动使用该用户的音乐 / 缓存目录，无需手动填写）</small>
                                             <div id="tag-group-openlist-users" class="tag-group-container"></div>
                                             <input type="hidden" name="openlist.userBackupUsers" />
                                         </div>
@@ -2230,10 +2230,29 @@
                                 </div>
                             </div>
                             <div class="config-card-body">
-                                <div class="config-actions">
-                                    <button type="button" class="btn-secondary" onclick="app.loadOpenlistBackups()">刷新状态</button>
+                                <div class="config-actions" style="flex-wrap:wrap;gap:.5rem;align-items:center;">
+                                    <button type="button" class="btn-secondary" onclick="app.loadOpenlistBackups()">刷新</button>
+                                    <button type="button" class="btn-primary" onclick="app.runOpenlistSync()">立即全量同步</button>
+                                    <select id="olb-filter-user" class="form-input config-input" style="width:auto;" onchange="app.loadOpenlistBackups()"><option value="">全部用户</option></select>
+                                    <select id="olb-filter-folder" class="form-input config-input" style="width:auto;" onchange="app.loadOpenlistBackups()">
+                                        <option value="">全部目录</option>
+                                        <option value="music">下载</option>
+                                        <option value="cache">缓存</option>
+                                    </select>
+                                    <select id="olb-filter-status" class="form-input config-input" style="width:auto;" onchange="app.loadOpenlistBackups()">
+                                        <option value="">全部状态</option>
+                                        <option value="pending">待上传</option>
+                                        <option value="uploading">进行中</option>
+                                        <option value="completed">已完成</option>
+                                        <option value="verified">已验证</option>
+                                        <option value="failed">失败</option>
+                                        <option value="deleted">已删除</option>
+                                    </select>
+                                    <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem;color:var(--text-secondary);cursor:pointer;">
+                                        <input type="checkbox" id="olb-autorefresh" onchange="app.toggleOpenlistAutoRefresh()" /> 自动刷新
+                                    </label>
                                 </div>
-                                <div id="openlist-backups-list"><div class="config-hint">点击「刷新状态」查看备份记录</div></div>
+                                <div id="openlist-backups-list"><div class="config-hint">点击「刷新」查看备份记录</div></div>
                             </div>
                         </div>
                     </div>

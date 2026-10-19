@@ -15,6 +15,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { OpenListClient } from './openlistClient'
 import { registerOpenListCacheFile, unregisterOpenListCacheFile } from './fileCache'
+import { getUserDirname } from '@/user'
 import {
   ensureBackupTables,
   upsertBackupFile,
@@ -30,15 +31,35 @@ import {
   setAttachmentStatus,
   countRefsToLocalPath,
   listAttachmentsToVerify,
+  getBackupById,
 } from './openlistBackupDb'
 
 type SyncMode = 'upload-delete' | 'upload' | 'sync' | 'download'
 
+/** 失败自动重投的最大次数（超过后该记录保持 failed，需手动重试） */
+const MAX_AUTO_RETRIES = 5
+/** 单次上传内置重试次数（覆盖网络抖动 / token 过期） */
+const UPLOAD_RETRY_TIMES = 3
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+/** 指数退避：1s, 2s, 4s ... 上限 8s */
+function backoffMs(attempt: number): number {
+  return Math.min(8000, 1000 * 2 ** (attempt - 1))
+}
+
 interface UserBackupCfg {
   user: string
   enabled: boolean
-  downloadDir: string
-  cacheDir: string
+  /** 是否备份该用户下载目录（默认 true；路径由后端自动拼接 userPath/<用户名>/music，无需手动填写） */
+  backupDownload?: boolean
+  /** 是否备份该用户缓存目录（默认 true；路径由后端自动拼接 userPath/<用户名>/cache） */
+  backupCache?: boolean
+  /** @deprecated 旧版手动填写的下载目录，仅作向后兼容；新版以 backupDownload 开关 + 自动拼接路径为准 */
+  downloadDir?: string
+  /** @deprecated 旧版手动填写的缓存目录，仅作向后兼容 */
+  cacheDir?: string
   mode?: SyncMode
 }
 
@@ -131,17 +152,28 @@ function getClient(): OpenListClient | null {
   return client
 }
 
+/**
+ * 解析某用户某目录类型的实际备份目录（自动拼接，用户无需填路径）：
+ *  - 对应开关（backupDownload/backupCache）显式为 false → 返回 null，表示不备份该目录；
+ *  - 旧版显式填写的 downloadDir/cacheDir 若存在则继续沿用（向后兼容）；
+ *  - 否则自动拼接 `userPath/<用户名>/<music|cache>`，与本地音乐/缓存目录结构保持一致。
+ */
 function resolveUserDir(entry: UserBackupCfg, folderType: 'cache' | 'music', cfg: BackupConfig): string | null {
-  const raw = folderType === 'music' ? entry.downloadDir : entry.cacheDir
-  if (raw && fs.existsSync(raw)) return raw
+  if (folderType === 'music' && entry.backupDownload === false) return null
+  if (folderType === 'cache' && entry.backupCache === false) return null
+  const legacy = folderType === 'music' ? entry.downloadDir : entry.cacheDir
+  if (legacy && fs.existsSync(legacy)) return legacy
   try {
-    const users: any[] = (globalThis as any).lx?.config?.users || []
-    const u = users.find((x) => x.name === entry.user)
-    if (u && u.dataPath) {
-      return folderType === 'music' ? path.join(u.dataPath, 'music') : path.join(u.dataPath, 'cache')
-    }
+    const lx = (globalThis as any).lx
+    const users: any[] = lx?.config?.users || []
+    const u = users.find((x: any) => x.name === entry.user)
+    // 优先用该用户已初始化的数据目录（= userPath/<用户名>），否则按用户名兜底拼接，确保与本地结构一致
+    let base: string | undefined
+    if (u && u.dataPath) base = u.dataPath
+    else if (lx?.userPath) base = path.join(lx.userPath, getUserDirname(entry.user))
+    if (base) return path.join(base, folderType)
   } catch { /* ignore */ }
-  return raw || null
+  return null
 }
 
 function isSubPath(child: string, parent: string): boolean {
@@ -208,18 +240,48 @@ function registerDownloadedCache(user: string, folderType: 'cache' | 'music', lo
 
 // ---------- 上传（含附件）----------
 
-async function uploadOne(row: any, cl: OpenListClient, mode: SyncMode): Promise<void> {
+async function uploadOne(row: any, cl: OpenListClient, mode: SyncMode, retries = UPLOAD_RETRY_TIMES): Promise<void> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      setBackupStatus(row.id, 'uploading')
+      await cl.mkdir(path.posix.dirname(row.remote_path))
+      const info = await cl.upload(row.local_path, row.remote_path)
+      setBackupStatus(row.id, 'completed', {
+        size: info.size,
+        name: info.name || path.basename(row.remote_path),
+        remotePath: row.remote_path,
+      })
+      return
+    } catch (e: any) {
+      if (attempt >= retries) {
+        setBackupStatus(row.id, 'failed', { error: String(e?.message || e), retryCount: (row.retry_count || 0) + 1 })
+        return
+      }
+      await sleep(backoffMs(attempt))
+    }
+  }
+}
+
+/**
+ * 单文件从远端下载到本地（download / sync 模式），并补登记缓存索引。
+ * 与 uploadOne 对称，失败记为 failed（带重试计数）。
+ */
+async function downloadOne(row: any, cl: OpenListClient, mode: SyncMode): Promise<void> {
   try {
     setBackupStatus(row.id, 'uploading')
-    await cl.mkdir(path.posix.dirname(row.remote_path))
-    const info = await cl.upload(row.local_path, row.remote_path)
-    setBackupStatus(row.id, 'completed', {
-      size: info.size,
-      name: info.name || path.basename(row.remote_path),
-      remotePath: row.remote_path,
-    })
+    fs.mkdirSync(path.dirname(row.local_path), { recursive: true })
+    await cl.download(row.remote_path, row.local_path)
+    const isAud = isAudio(row.local_path)
+    let size = 0
+    try { size = fs.statSync(row.local_path).size } catch { /* ignore */ }
+    if (isAud) {
+      const id = registerDownloadedCache(row.user, row.folder_type, row.local_path)
+      setBackupStatus(row.id, 'verified', { size, remotePath: row.remote_path })
+    } else {
+      setBackupStatus(row.id, 'completed', { size, remotePath: row.remote_path })
+    }
   } catch (e: any) {
-    setBackupStatus(row.id, 'failed', { error: String(e?.message || e) })
+    setBackupStatus(row.id, 'failed', { error: String(e?.message || e), retryCount: (row.retry_count || 0) + 1 })
   }
 }
 
@@ -362,6 +424,18 @@ export async function verifyPending(): Promise<void> {
       } catch {
         // 仍在后台处理，留待下次轮询
       }
+    }
+    // 失败自动重投（限次，超过 MAX_AUTO_RETRIES 后保持 failed，由用户手动重试）
+    for (const row of listBackupByStatus('failed')) {
+      if ((row.retry_count || 0) >= MAX_AUTO_RETRIES) continue
+      const mode = effectiveModeFromRow(row, cfg)
+      try {
+        if (mode === 'download' || mode === 'sync') {
+          if (row.local_path) await downloadOne(row, cl, mode)
+        } else {
+          if (row.local_path && fs.existsSync(row.local_path)) await uploadOne(row, cl, mode)
+        }
+      } catch { /* ignore */ }
     }
     // 附件二次校验
     for (const att of listAttachmentsToVerify()) {
@@ -600,4 +674,31 @@ export function listBackups(): any[] {
   ensureBackupTables()
   const files = listAllBackups()
   return files.map((f) => ({ ...f, attachments: listAttachments(f.id) }))
+}
+
+/**
+ * 单文件手动重试：将指定备份记录重置为 pending 并立即重新上传/下载。
+ * 用于前端「重试」按钮或从 API 调用。返回是否成功找到并重投。
+ */
+export async function retryBackup(id: number): Promise<boolean> {
+  const cfg = getConfig()
+  if (!cfg.enable) return false
+  const cl = getClient()
+  if (!cl) return false
+  const row = getBackupById(id)
+  if (!row) return false
+  const mode = effectiveModeFromRow(row, cfg)
+  setBackupStatus(id, 'pending', { error: null, retryCount: 0 })
+  try {
+    if (mode === 'download' || mode === 'sync') {
+      if (!row.local_path) return false
+      await downloadOne(row, cl, mode)
+    } else {
+      if (!row.local_path || !fs.existsSync(row.local_path)) return false
+      await uploadOne(row, cl, mode)
+    }
+  } catch {
+    return false
+  }
+  return true
 }

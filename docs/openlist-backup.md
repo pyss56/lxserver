@@ -23,7 +23,7 @@
    ▼
 OpenListBackupManager
    │  1. 检查 openlist.enable 与用户是否开启备份
-   │  2. 按 folderType 取该用户的 下载/缓存 目录（留空则回退到用户默认 dataPath/music|cache）
+   │  2. 按 folderType 取该用户的 下载/缓存 目录（自动拼接为用户默认 userPath/<用户名>/music|cache）
    │  3. 若 includeNonAudio：扫描该目录下的图片等非音频文件并一并入队
    │  4. 计算远端路径 root/user/folderType/<相对路径>
    ▼
@@ -67,14 +67,15 @@ status -> verified（并记录纯路径）
 | `openlist.keepLocalAfterUpload` | boolean | `true` | 上传完成后是否保留本地文件（`false` 时于 `verified` 后删除本地副本） |
 | `openlist.verifyInterval` | number(分钟) | `5` | 验证轮询间隔：轮询 OpenList 确认文件已落库后标记为 `verified` |
 | `openlist.includeNonAudio` | boolean | `false` | 是否一并备份下载 / 缓存目录中的图片等非音频文件 |
-| `openlist.userBackups` | string(JSON) | `'[]'` | 每用户配置：`[{ user, enabled, downloadDir, cacheDir }]` |
+| `openlist.userBackups` | string(JSON) | `'[]'` | 每用户配置：`[{ user, enabled, backupDownload, backupCache, mode? }]`（目录路径自动拼接，无需填写） |
 
 > `openlist.root` 默认 `/lx_music`：请确保其对应的 OpenList 路径真实存在（实例挂载或自建目录）。例如天翼云盘挂载名为 `tyCloud`，应使用 `/tyCloud/lx_music` 作为根目录。
 
 ### 用户级目录配置（前端多选 + 每用户目录）
 
 - 「备份用户」使用现有多选标签样式，数据源为 `GET /api/users`。
-- 选中某用户后，可单独填写其**下载目录**与**缓存目录**绝对路径；留空则自动回退到该用户的默认空间目录（`dataPath/music`、`dataPath/cache`）。
+- 选中某用户后，可单独开关其**下载目录**与**缓存目录**的备份（默认均开启）；备份路径由后端**自动拼接**为该用户的默认空间目录（`userPath/<用户名>/music`、`userPath/<用户名>/cache`），与本地结构一致，用户无需手动填写路径。
+- 兼容旧数据：旧版手动填写的 `downloadDir` / `cacheDir` 若存在仍会沿用；新版保存的数据字段为 `backupDownload` / `backupCache`（布尔开关）。
 - 只有「启用」且目录与落盘文件路径匹配的用户才会被备份。
 
 ---

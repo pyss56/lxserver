@@ -27,7 +27,7 @@ const musicSdk = musicSdkRaw as any
 import { initUserApis, callUserApiGetMusicUrl, isSourceSupported, getLoadedApis, getLoadedApisCount } from './userApi'
 import * as customSourceHandlers from './customSourceHandlers'
 import * as fileCache from './fileCache'
-import { startVerifyScheduler, runSyncNow, listBackups } from './openlistBackup'
+import { startVerifyScheduler, runSyncNow, listBackups, retryBackup } from './openlistBackup'
 import { OpenListClient } from './openlistClient'
 
 /**
@@ -7866,6 +7866,34 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
           res.writeHead(500, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: false, error: e?.message || String(e) }))
         }
+        return
+      }
+
+      // [OpenList 同步 API] 单文件手动重试
+      if (pathname === '/api/openlist/retry' && req.method === 'POST') {
+        const auth = req.headers['x-frontend-auth']
+        if (auth !== global.lx.config['admin.password']) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized' }))
+          return
+        }
+        void readBody(req).then(async (body) => {
+          try {
+            const cfg = JSON.parse(body || '{}')
+            const id = Number(cfg.id)
+            if (!id) {
+              res.writeHead(422, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ success: false, error: '缺少 id' }))
+              return
+            }
+            const ok = await retryBackup(id)
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: ok }))
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: false, error: e?.message || String(e) }))
+          }
+        })
         return
       }
 

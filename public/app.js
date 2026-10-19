@@ -3132,10 +3132,10 @@ class App {
         ;(backups || []).forEach(b => { map[b.user] = b })
         const prev = {}
         selected.forEach(u => {
-            const d = document.getElementById('openlist-dir-' + u + '-download')
-            const c = document.getElementById('openlist-dir-' + u + '-cache')
+            const d = document.getElementById('openlist-dl-sw-' + u)
+            const c = document.getElementById('openlist-ca-sw-' + u)
             const m = document.getElementById('openlist-mode-' + u)
-            prev[u] = { download: d ? d.value : '', cache: c ? c.value : '', mode: m ? m.value : '' }
+            prev[u] = { download: d ? d.checked : null, cache: c ? c.checked : null, mode: m ? m.value : '' }
         })
         const modeOptions = (sel) => ([
             ['upload', '上传（保留本地）'],
@@ -3144,16 +3144,23 @@ class App {
             ['sync', '双向同步'],
         ]).map(([v, t]) => '<option value="' + v + '"' + (v === sel ? ' selected' : '') + '>' + t + '</option>').join('')
         const modeHelp = '上传：本地新增自动上传，保留本地；上传后删除：上传完成即删本地并清缓存索引；下载：仅把云端该用户目录拉到本地并补缓存；双向同步：本地/云端任一侧新增或删除都会双向同步'
+        const toggleHtml = (id, checked) =>
+            '<label class="toggle-switch">' +
+            '<input type="checkbox" id="' + id + '"' + (checked ? ' checked' : '') + '>' +
+            '<span class="toggle-track"><span class="toggle-thumb"></span></span>' +
+            '</label>'
         dirsContainer.innerHTML = selected.map(u => {
             const tpl = map[u] || {}
-            const dl = (prev[u] ? prev[u].download : (tpl.downloadDir || ''))
-            const ca = (prev[u] ? prev[u].cache : (tpl.cacheDir || ''))
-            const md = (prev[u] ? prev[u].mode : (tpl.mode || 'upload'))
+            const dlOn = (prev[u] && prev[u].download !== null) ? prev[u].download : (tpl.backupDownload !== false)
+            const caOn = (prev[u] && prev[u].cache !== null) ? prev[u].cache : (tpl.backupCache !== false)
+            const md = (prev[u] && prev[u].mode) ? prev[u].mode : (tpl.mode || 'upload')
             return '<div class="config-field" style="border-left:3px solid var(--accent);padding-left:.75rem;margin-top:.5rem">' +
                 '<label class="config-label">用户 <b>' + u + '</b> 的同步配置</label>' +
                 '<div class="config-field-row">' +
-                '<div class="config-field"><label class="config-label">下载目录</label><input type="text" id="openlist-dir-' + u + '-download" class="form-input config-input" value="' + (dl || '').replace(/"/g, '&quot;') + '" placeholder="留空=默认该用户音乐目录"></div>' +
-                '<div class="config-field"><label class="config-label">缓存目录</label><input type="text" id="openlist-dir-' + u + '-cache" class="form-input config-input" value="' + (ca || '').replace(/"/g, '&quot;') + '" placeholder="留空=默认该用户缓存目录"></div>' +
+                '<div class="config-field"><label class="config-label">备份下载目录</label>' + toggleHtml('openlist-dl-sw-' + u, dlOn) +
+                '<small class="config-hint" style="display:block;">自动使用该用户音乐目录，无需填写路径</small></div>' +
+                '<div class="config-field"><label class="config-label">备份缓存目录</label>' + toggleHtml('openlist-ca-sw-' + u, caOn) +
+                '<small class="config-hint" style="display:block;">自动使用该用户缓存目录，无需填写路径</small></div>' +
                 '<div class="config-field"><label class="config-label">同步模式</label>' +
                 '<select id="openlist-mode-' + u + '" class="form-input config-input" title="' + modeHelp + '">' + modeOptions(md) + '</select>' +
                 '<small class="config-hint" style="display:block;">' + modeHelp + '</small></div>' +
@@ -3165,10 +3172,10 @@ class App {
         const hidden = document.querySelector('input[name="openlist.userBackupUsers"]')
         const selected = (hidden && hidden.value ? hidden.value.split(',').map(s => s.trim()).filter(Boolean) : [])
         return JSON.stringify(selected.map(u => {
-            const d = document.getElementById('openlist-dir-' + u + '-download')
-            const c = document.getElementById('openlist-dir-' + u + '-cache')
+            const d = document.getElementById('openlist-dl-sw-' + u)
+            const c = document.getElementById('openlist-ca-sw-' + u)
             const m = document.getElementById('openlist-mode-' + u)
-            return { user: u, enabled: true, downloadDir: (d ? d.value : '').trim(), cacheDir: (c ? c.value : '').trim(), mode: (m ? m.value : 'upload') }
+            return { user: u, enabled: true, backupDownload: d ? !!d.checked : true, backupCache: c ? !!c.checked : true, mode: (m ? m.value : 'upload') }
         }))
     }
 
@@ -3223,40 +3230,94 @@ class App {
         }
     }
 
-    async loadOpenlistBackups() {
+    async loadOpenlistBackups(silent) {
         const box = document.getElementById('openlist-backups-list')
         if (!box) return
-        box.innerHTML = '<div class="config-hint">加载中…</div>'
+        if (!silent) box.innerHTML = '<div class="config-hint">加载中…</div>'
         try {
             const r = await this.request('/api/openlist/backups')
-            const list = (r && r.list) || []
+            let list = (r && r.list) || []
+            // 填充「用户」筛选（仅在首次/选项不足时）
+            const userSel = document.getElementById('olb-filter-user')
+            if (userSel && userSel.options.length <= 1) {
+                const users = [...new Set(list.map(f => f.user).filter(Boolean))].sort()
+                users.forEach(u => { const o = document.createElement('option'); o.value = u; o.textContent = u; userSel.appendChild(o) })
+            }
+            const fu = document.getElementById('olb-filter-user')
+            const ff = document.getElementById('olb-filter-folder')
+            const fs2 = document.getElementById('olb-filter-status')
+            const uv = fu ? fu.value : ''
+            const fv = ff ? ff.value : ''
+            const sv = fs2 ? fs2.value : ''
+            list = list.filter(f =>
+                (!uv || f.user === uv) &&
+                (!fv || f.folder_type === fv) &&
+                (!sv || f.status === sv)
+            )
             if (!list.length) {
-                box.innerHTML = '<div class="config-hint">暂无备份记录</div>'
+                box.innerHTML = '<div class="config-hint">暂无符合条件的备份记录</div>'
                 return
             }
-            const statusMap = { pending: '待上传', uploading: '上传中', completed: '已完成', verified: '已验证', failed: '失败', deleted: '已删除' }
+            const statusMap = { pending: '待上传', uploading: '进行中', completed: '已完成', verified: '已验证', failed: '失败', deleted: '已删除' }
+            const badgeColor = { pending: '#64748b', uploading: '#3b82f6', completed: '#0ea5e9', verified: '#22c55e', failed: '#ef4444', deleted: '#94a3b8' }
             const fmtName = (f) => ((f.name || f.local_path || '').toString().replace(/</g, '&lt;') || '(未知)')
-            box.innerHTML = '<div style="overflow:auto;max-height:420px;">' +
+            const fmtSize = (n) => {
+                n = Number(n) || 0
+                if (n < 1024) return n + ' B'
+                if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+                return (n / 1024 / 1024).toFixed(1) + ' MB'
+            }
+            const rows = list.slice(0, 500).map(f => {
+                const d = new Date(f.updated_at || f.created_at || Date.now())
+                const color = badgeColor[f.status] || '#64748b'
+                const label = statusMap[f.status] || f.status || ''
+                const typeLabel = f.folder_type === 'music' ? '下载' : (f.folder_type === 'cache' ? '缓存' : (f.folder_type || ''))
+                const canRetry = f.status !== 'verified' && f.status !== 'deleted'
+                const retryBtn = canRetry
+                    ? '<button type="button" class="btn-secondary" style="padding:.15rem .6rem;font-size:.72rem;" onclick="app.retryOpenlistBackup(' + f.id + ')">重试</button>'
+                    : '<span style="color:var(--text-secondary);">—</span>'
+                return '<tr style="border-bottom:1px solid var(--border);">' +
+                    '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
+                    '<td style="padding:.4rem .5rem;">' + typeLabel + '</td>' +
+                    '<td style="padding:.4rem .5rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
+                    '<td style="padding:.4rem .5rem;"><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:.72rem;">' + label + '</span></td>' +
+                    '<td style="padding:.4rem .5rem;white-space:nowrap;">' + fmtSize(f.size) + '</td>' +
+                    '<td style="padding:.4rem .5rem;white-space:nowrap;">' + d.toLocaleString() + '</td>' +
+                    '<td style="padding:.4rem .5rem;white-space:nowrap;">' + retryBtn + '</td>' +
+                    '</tr>'
+            }).join('')
+            box.innerHTML = '<div style="overflow:auto;max-height:460px;">' +
                 '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">' +
                 '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
                 '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
-                '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">附件</th><th style="padding:.4rem .5rem;">更新时间</th>' +
-                '</tr></thead><tbody>' +
-                list.slice(0, 300).map(f => {
-                    const att = (f.attachments || []).length
-                    const d = new Date(f.updated_at || f.created_at || Date.now())
-                    return '<tr style="border-bottom:1px solid var(--border);">' +
-                        '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
-                        '<td style="padding:.4rem .5rem;">' + (f.folder_type || '') + '</td>' +
-                        '<td style="padding:.4rem .5rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
-                        '<td style="padding:.4rem .5rem;">' + (statusMap[f.status] || f.status || '') + '</td>' +
-                        '<td style="padding:.4rem .5rem;">' + att + '</td>' +
-                        '<td style="padding:.4rem .5rem;white-space:nowrap;">' + d.toLocaleString() + '</td>' +
-                        '</tr>'
-                }).join('') + '</tbody></table></div>'
+                '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>'
         } catch (e) {
             console.error(e)
             box.innerHTML = '<div class="config-hint" style="color:var(--danger);">加载失败: ' + (e && e.message || e) + '</div>'
+        }
+    }
+
+    async retryOpenlistBackup(id) {
+        try {
+            const r = await this.request('/api/openlist/retry', { method: 'POST', body: JSON.stringify({ id }) })
+            if (r && r.success) {
+                if (window.showInfo) window.showInfo('已提交重试')
+                this.loadOpenlistBackups(true)
+            } else if (window.showError) {
+                window.showError('重试失败: ' + ((r && r.error) || '未知错误'))
+            }
+        } catch (e) {
+            console.error(e)
+            if (window.showError) window.showError('重试失败: ' + (e && e.message || e))
+        }
+    }
+
+    toggleOpenlistAutoRefresh() {
+        const cb = document.getElementById('olb-autorefresh')
+        if (this._olbTimer) { clearInterval(this._olbTimer); this._olbTimer = null }
+        if (cb && cb.checked) {
+            this._olbTimer = setInterval(() => this.loadOpenlistBackups(true), 10000)
         }
     }
 

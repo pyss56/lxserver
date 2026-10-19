@@ -62,13 +62,23 @@ declare namespace LX {
      */
     enabled: boolean
     /**
-     * 备份该用户的下载(音乐)目录绝对路径，留空表示不备份下载目录
+     * 是否备份该用户的下载(音乐)目录，默认 true；
+     * 备份路径由后端自动拼接该用户 dataPath/music，无需手动填写
      */
-    downloadDir: string
+    backupDownload?: boolean
     /**
-     * 备份该用户的缓存目录绝对路径，留空表示不备份缓存目录
+     * 是否备份该用户的缓存目录，默认 true；
+     * 备份路径由后端自动拼接该用户 dataPath/cache，无需手动填写
      */
-    cacheDir: string
+    backupCache?: boolean
+    /**
+     * @deprecated 旧版手动填写的下载目录绝对路径，仅作向后兼容；新版以 backupDownload 开关为准
+     */
+    downloadDir?: string
+    /**
+     * @deprecated 旧版手动填写的缓存目录绝对路径，仅作向后兼容；新版以 backupCache 开关为准
+     */
+    cacheDir?: string
     /**
      * 同步模式（按用户 + 目录独立设置）：
      *  - upload        ：仅上传本地新增到 OpenList，保留本地

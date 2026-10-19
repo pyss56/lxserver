@@ -40,6 +40,7 @@ export interface BackupFileRow {
   quality: string | null
   status: BackupStatus
   error: string | null
+  retry_count: number
   created_at: number
   updated_at: number
 }
@@ -98,6 +99,7 @@ export function getBackupDb(): DatabaseSync {
     mode TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
+    retry_count INTEGER DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     UNIQUE(user, folder_type, local_path)
@@ -105,6 +107,10 @@ export function getBackupDb(): DatabaseSync {
   // 老库兼容：补齐 mode 列
   try {
     db.exec(`ALTER TABLE openlist_backup_files ADD COLUMN mode TEXT`)
+  } catch { /* 列已存在 */ }
+  // 老库兼容：补齐 retry_count 列
+  try {
+    db.exec(`ALTER TABLE openlist_backup_files ADD COLUMN retry_count INTEGER DEFAULT 0`)
   } catch { /* 列已存在 */ }
   db.exec(`CREATE TABLE IF NOT EXISTS openlist_backup_attachments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,7 +168,7 @@ export function upsertBackupFile(input: UpsertBackupInput): BackupFileRow {
 export function setBackupStatus(
   id: number,
   status: BackupStatus,
-  opts: { error?: string | null; size?: number | null; name?: string | null; remotePath?: string | null } = {},
+  opts: { error?: string | null; size?: number | null; name?: string | null; remotePath?: string | null; retryCount?: number | null } = {},
 ): void {
   const db = getBackupDb()
   const sets: string[] = ['status = ?', 'updated_at = ?']
@@ -171,6 +177,7 @@ export function setBackupStatus(
   if (opts.size !== undefined) { sets.push('size = ?'); params.push(opts.size) }
   if (opts.name !== undefined) { sets.push('name = ?'); params.push(opts.name) }
   if (opts.remotePath !== undefined) { sets.push('remote_path = ?'); params.push(opts.remotePath) }
+  if (opts.retryCount !== undefined) { sets.push('retry_count = ?'); params.push(opts.retryCount) }
   params.push(id)
   db.prepare(`UPDATE openlist_backup_files SET ${sets.join(', ')} WHERE id = ?`).run(...params)
 }
