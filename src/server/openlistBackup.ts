@@ -14,8 +14,7 @@
 import path from 'node:path'
 import fs from 'node:fs'
 import { OpenListClient } from './openlistClient'
-import { registerOpenListCacheFile, unregisterOpenListCacheFile } from './fileCache'
-import { getUserDirname } from '@/user'
+import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir } from './fileCache'
 import {
   ensureBackupTables,
   upsertBackupFile,
@@ -153,27 +152,23 @@ function getClient(): OpenListClient | null {
 }
 
 /**
- * 解析某用户某目录类型的实际备份目录（自动拼接，用户无需填路径）：
+ * 解析某用户某目录类型的实际备份目录：
  *  - 对应开关（backupDownload/backupCache）显式为 false → 返回 null，表示不备份该目录；
  *  - 旧版显式填写的 downloadDir/cacheDir 若存在则继续沿用（向后兼容）；
- *  - 否则自动拼接 `userPath/<用户名>/<music|cache>`，与本地音乐/缓存目录结构保持一致。
+ *  - 否则复用 fileCache.getCacheDir，得到应用真正写入缓存/下载文件的目录（与本地结构一致）。
+ *    注意：缓存/下载目录不一定在 dataPath 下，可能位于运行目录（如 /server/cache/<user>）或
+ *    data 根（data/cache/<user>），必须以应用自身的目录解析为准，不能自行拼接。
  */
-function resolveUserDir(entry: UserBackupCfg, folderType: 'cache' | 'music', cfg: BackupConfig): string | null {
+function resolveUserDir(entry: UserBackupCfg, folderType: 'cache' | 'music', _cfg: BackupConfig): string | null {
   if (folderType === 'music' && entry.backupDownload === false) return null
   if (folderType === 'cache' && entry.backupCache === false) return null
   const legacy = folderType === 'music' ? entry.downloadDir : entry.cacheDir
   if (legacy && fs.existsSync(legacy)) return legacy
   try {
-    const lx = (globalThis as any).lx
-    const users: any[] = lx?.config?.users || []
-    const u = users.find((x: any) => x.name === entry.user)
-    // 优先用该用户已初始化的数据目录（= userPath/<用户名>），否则按用户名兜底拼接，确保与本地结构一致
-    let base: string | undefined
-    if (u && u.dataPath) base = u.dataPath
-    else if (lx?.userPath) base = path.join(lx.userPath, getUserDirname(entry.user))
-    if (base) return path.join(base, folderType)
-  } catch { /* ignore */ }
-  return null
+    return getCacheDir(entry.user, folderType === 'music')
+  } catch {
+    return null
+  }
 }
 
 function isSubPath(child: string, parent: string): boolean {

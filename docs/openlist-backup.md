@@ -23,7 +23,7 @@
    ▼
 OpenListBackupManager
    │  1. 检查 openlist.enable 与用户是否开启备份
-   │  2. 按 folderType 取该用户的 下载/缓存 目录（自动拼接为用户默认 userPath/<用户名>/music|cache）
+   │  2. 按 folderType 取该用户的 下载/缓存 目录（经 fileCache.getCacheDir 解析为应用实际的缓存/下载目录）
    │  3. 若 includeNonAudio：扫描该目录下的图片等非音频文件并一并入队
    │  4. 计算远端路径 root/user/folderType/<相对路径>
    ▼
@@ -74,7 +74,7 @@ status -> verified（并记录纯路径）
 ### 用户级目录配置（前端多选 + 每用户目录）
 
 - 「备份用户」使用现有多选标签样式，数据源为 `GET /api/users`。
-- 选中某用户后，可单独开关其**下载目录**与**缓存目录**的备份（默认均开启）；备份路径由后端**自动拼接**为该用户的默认空间目录（`userPath/<用户名>/music`、`userPath/<用户名>/cache`），与本地结构一致，用户无需手动填写路径。
+- 选中某用户后，可单独开关其**下载目录**与**缓存目录**的备份（默认均开启）；备份路径由后端经 `fileCache.getCacheDir` **解析为应用实际的缓存/下载目录**（通常 `/server/cache/<用户>` 或 `/server/music/<用户>`），与本地结构一致，用户无需手动填写路径。
 - 兼容旧数据：旧版手动填写的 `downloadDir` / `cacheDir` 若存在仍会沿用；新版保存的数据字段为 `backupDownload` / `backupCache`（布尔开关）。
 - 只有「启用」且目录与落盘文件路径匹配的用户才会被备份。
 

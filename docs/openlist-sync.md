@@ -37,7 +37,7 @@
 | `openlist.verifyInterval` | 验证轮询间隔（分钟） | 5 |
 | `openlist.syncInterval` | 同步间隔（分钟），**预留，暂未启用** | 60 |
 | `openlist.includeNonAudio` | 是否一并备份图片/歌词等附件 | false |
-| `openlist.userBackups` | JSON 数组，每条：`{ user, enabled, backupDownload?, backupCache?, mode? }`（目录路径自动拼接 `userPath/<用户名>/music`、`userPath/<用户名>/cache`，与本地结构一致，无需填写；旧字段 `downloadDir`/`cacheDir` 仅向后兼容） | `[]` |
+| `openlist.userBackups` | JSON 数组，每条：`{ user, enabled, backupDownload?, backupCache?, mode? }`（目录路径由后端经 `fileCache.getCacheDir` 解析为应用实际的缓存/下载目录，通常 `/server/cache/<用户>` 或 `/server/music/<用户>`，与本地结构一致，无需填写；旧字段 `downloadDir`/`cacheDir` 仅向后兼容） | `[]` |
 
 `userBackups[].mode` 取值：`upload-delete` / `upload` / `sync` / `download`。
 
@@ -48,7 +48,7 @@
 1. 若 `openlist.enable` 为真：使用新凭据调用 OpenList 登录并列出根目录，**实测可用性**；失败抛错（如「账号校验失败：…」）。
 2. 校验每个已启用的 `userBackups` 条目：
    - 引用的 `user` 必须存在于 `config.users`；
-   - `downloadDir` / `cacheDir` 为旧版兼容字段，若填写则要求指向的目录**存在且可读**，否则报「同步目录不存在或无权限」；新版开关模式由后端自动拼接 `userPath/<用户名>/music|cache`，无需校验。
+   - `downloadDir` / `cacheDir` 为旧版兼容字段，若填写则要求指向的目录**存在且可读**，否则报「同步目录不存在或无权限」；新版开关模式由后端经 `fileCache.getCacheDir` 解析实际缓存/下载目录，无需校验。
 
 > 另有独立的 `POST /api/openlist/test` 接口，可在保存前由前端单独「测试连接」。
 
