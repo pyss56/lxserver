@@ -3267,20 +3267,31 @@ class App {
                 }
                 return true
             })
-            if (!list.length) {
+            const pageSize = this._olbPageSize || 50
+            const total = list.length
+            const totalPages = Math.max(1, Math.ceil(total / pageSize))
+            this._olbTotalPages = totalPages
+            if (!this._olbPage || this._olbPage < 1) this._olbPage = 1
+            if (this._olbPage > totalPages) this._olbPage = totalPages
+            const start = (this._olbPage - 1) * pageSize
+            if (!total) {
                 box.innerHTML = '<div class="config-hint">暂无符合条件的备份记录</div>'
                 return
             }
             const statusMap = { pending: '待上传', uploading: '进行中', completed: '已完成', verified: '已验证', failed: '失败', deleted: '已删除' }
             const badgeColor = { pending: '#64748b', uploading: '#3b82f6', completed: '#0ea5e9', verified: '#22c55e', failed: '#ef4444', deleted: '#94a3b8' }
-            const fmtName = (f) => ((f.name || f.local_path || '').toString().replace(/</g, '&lt;') || '(未知)')
+            const fmtName = (f) => {
+                const nm = (f.name || '').toString().trim()
+                const base = nm || (f.local_path ? f.local_path.split(/[\\/]/).pop() : '') || '(未知)'
+                return base.replace(/</g, '&lt;')
+            }
             const fmtSize = (n) => {
                 n = Number(n) || 0
                 if (n < 1024) return n + ' B'
                 if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
                 return (n / 1024 / 1024).toFixed(1) + ' MB'
             }
-            const rows = list.slice(0, 2000).map(f => {
+            const rows = list.slice(start, start + pageSize).map(f => {
                 const d = new Date(f.updated_at || f.created_at || Date.now())
                 const color = badgeColor[f.status] || '#64748b'
                 const label = statusMap[f.status] || f.status || ''
@@ -3299,12 +3310,23 @@ class App {
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + retryBtn + '</td>' +
                     '</tr>'
             }).join('')
+            const pager = '<div class="olb-pager" style="display:flex;gap:.4rem;align-items:center;justify-content:flex-end;margin-top:.6rem;font-size:.82rem;color:var(--text-secondary);flex-wrap:wrap;">' +
+                '<button type="button" class="btn-secondary" style="padding:.25rem .6rem;font-size:.78rem;" onclick="app.gotoOpenlistPage(1)">« 首页</button>' +
+                '<button type="button" class="btn-secondary" style="padding:.25rem .6rem;font-size:.78rem;" onclick="app.gotoOpenlistPage(Math.max(1,(app._olbPage||1)-1))">上一页</button>' +
+                '<span>第 ' + this._olbPage + ' / ' + totalPages + ' 页（共 ' + total + ' 条）</span>' +
+                '<button type="button" class="btn-secondary" style="padding:.25rem .6rem;font-size:.78rem;" onclick="app.gotoOpenlistPage(Math.min(' + totalPages + ',(app._olbPage||1)+1))">下一页</button>' +
+                '<button type="button" class="btn-secondary" style="padding:.25rem .6rem;font-size:.78rem;" onclick="app.gotoOpenlistPage(' + totalPages + ')">末页 »</button>' +
+                '<select class="form-input config-input" style="width:auto;font-size:.78rem;" onchange="app.setOpenlistPageSize(this.value)">' +
+                '<option value="50"' + (pageSize === 50 ? ' selected' : '') + '>50/页</option>' +
+                '<option value="100"' + (pageSize === 100 ? ' selected' : '') + '>100/页</option>' +
+                '<option value="200"' + (pageSize === 200 ? ' selected' : '') + '>200/页</option>' +
+                '</select></div>'
             box.innerHTML = '<div style="overflow:auto;max-height:460px;">' +
                 '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">' +
                 '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
                 '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
                 '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
-                '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>' + pager
         } catch (e) {
             console.error(e)
             box.innerHTML = '<div class="config-hint" style="color:var(--danger);">加载失败: ' + (e && e.message || e) + '</div>'
@@ -3351,13 +3373,32 @@ class App {
 
     scheduleOpenlistReload() {
         if (this._olbReloadTimer) clearTimeout(this._olbReloadTimer)
-        this._olbReloadTimer = setTimeout(() => this.loadOpenlistBackups(), 300)
+        this._olbReloadTimer = setTimeout(() => { this._olbPage = 1; this.loadOpenlistBackups() }, 300)
     }
 
     clearOpenlistFilters() {
         ['olb-filter-user', 'olb-filter-folder', 'olb-filter-status', 'olb-filter-name', 'olb-filter-path'].forEach((id) => {
             const el = document.getElementById(id); if (el) el.value = ''
         })
+        this._olbPage = 1
+        this.loadOpenlistBackups()
+    }
+
+    applyOpenlistFilter() {
+        this._olbPage = 1
+        this.loadOpenlistBackups()
+    }
+
+    gotoOpenlistPage(n) {
+        const tp = this._olbTotalPages || 1
+        n = Math.max(1, Math.min(tp, parseInt(n) || 1))
+        this._olbPage = n
+        this.loadOpenlistBackups(true)
+    }
+
+    setOpenlistPageSize(v) {
+        this._olbPageSize = parseInt(v) || 50
+        this._olbPage = 1
         this.loadOpenlistBackups()
     }
 

@@ -162,9 +162,11 @@ export function upsertBackupFile(input: UpsertBackupInput): BackupFileRow {
       mode = excluded.mode,
       status = excluded.status,
       updated_at = excluded.updated_at`)
+  // 未显式传 name 时，用本地路径的文件名兜底，保证 pending/uploading 记录也能显示文件名（而非整条路径）
+  const name = input.name || (input.localPath ? path.basename(input.localPath) : null)
   stmt.run(
     input.user, input.folderType, input.localPath, input.remotePath,
-    input.size ?? null, input.name ?? null, input.source ?? null,
+    input.size ?? null, name, input.source ?? null,
     input.songmid ?? null, input.quality ?? null, input.mode ?? null, status, now, now,
   )
   return getBackupByLocalPath(input.user, input.folderType, input.localPath)!

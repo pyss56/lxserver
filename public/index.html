@@ -2244,13 +2244,13 @@
                                 <div class="config-actions" style="flex-wrap:wrap;gap:.5rem;align-items:center;">
                                     <button type="button" class="btn-secondary" onclick="app.loadOpenlistBackups()">刷新</button>
                                     <button type="button" class="btn-primary" onclick="app.runOpenlistSync()">立即全量同步</button>
-                                    <select id="olb-filter-user" class="form-input config-input" style="width:auto;" onchange="app.loadOpenlistBackups()"><option value="">全部用户</option></select>
-                                    <select id="olb-filter-folder" class="form-input config-input" style="width:auto;" onchange="app.loadOpenlistBackups()">
+                                    <select id="olb-filter-user" class="form-input config-input" style="width:auto;" onchange="app.applyOpenlistFilter()"><option value="">全部用户</option></select>
+                                    <select id="olb-filter-folder" class="form-input config-input" style="width:auto;" onchange="app.applyOpenlistFilter()">
                                         <option value="">全部目录</option>
                                         <option value="music">下载</option>
                                         <option value="cache">缓存</option>
                                     </select>
-                                    <select id="olb-filter-status" class="form-input config-input" style="width:auto;" onchange="app.loadOpenlistBackups()">
+                                    <select id="olb-filter-status" class="form-input config-input" style="width:auto;" onchange="app.applyOpenlistFilter()">
                                         <option value="">全部状态</option>
                                         <option value="pending">待上传</option>
                                         <option value="uploading">进行中</option>
