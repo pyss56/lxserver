@@ -3200,6 +3200,7 @@ class App {
                 users = (ulist || []).map(u => u.name).filter(Boolean)
             } catch (e) { console.warn('获取用户列表失败', e) }
             this.renderOpenlistUserConfig(users, config['openlist.userBackups'])
+            this.loadOpenlistBackups()
         } catch (e) {
             console.error(e)
             if (window.showError) window.showError('加载 OpenList 配置失败: ' + (e && e.message || e))
@@ -3264,17 +3265,29 @@ class App {
         selected.forEach(u => {
             const d = document.getElementById('openlist-dir-' + u + '-download')
             const c = document.getElementById('openlist-dir-' + u + '-cache')
-            prev[u] = { download: d ? d.value : '', cache: c ? c.value : '' }
+            const m = document.getElementById('openlist-mode-' + u)
+            prev[u] = { download: d ? d.value : '', cache: c ? c.value : '', mode: m ? m.value : '' }
         })
+        const modeOptions = (sel) => ([
+            ['upload', '上传（保留本地）'],
+            ['upload-delete', '上传后删除本地'],
+            ['download', '下载（远端→本地）'],
+            ['sync', '双向同步'],
+        ]).map(([v, t]) => '<option value="' + v + '"' + (v === sel ? ' selected' : '') + '>' + t + '</option>').join('')
+        const modeHelp = '上传：本地新增自动上传，保留本地；上传后删除：上传完成即删本地并清缓存索引；下载：仅把云端该用户目录拉到本地并补缓存；双向同步：本地/云端任一侧新增或删除都会双向同步'
         dirsContainer.innerHTML = selected.map(u => {
             const tpl = map[u] || {}
             const dl = (prev[u] ? prev[u].download : (tpl.downloadDir || ''))
             const ca = (prev[u] ? prev[u].cache : (tpl.cacheDir || ''))
+            const md = (prev[u] ? prev[u].mode : (tpl.mode || 'upload'))
             return '<div class="config-field" style="border-left:3px solid var(--accent);padding-left:.75rem;margin-top:.5rem">' +
-                '<label class="config-label">用户 <b>' + u + '</b> 的备份目录</label>' +
+                '<label class="config-label">用户 <b>' + u + '</b> 的同步配置</label>' +
                 '<div class="config-field-row">' +
                 '<div class="config-field"><label class="config-label">下载目录</label><input type="text" id="openlist-dir-' + u + '-download" class="form-input config-input" value="' + (dl || '').replace(/"/g, '&quot;') + '" placeholder="留空=默认该用户音乐目录"></div>' +
                 '<div class="config-field"><label class="config-label">缓存目录</label><input type="text" id="openlist-dir-' + u + '-cache" class="form-input config-input" value="' + (ca || '').replace(/"/g, '&quot;') + '" placeholder="留空=默认该用户缓存目录"></div>' +
+                '<div class="config-field"><label class="config-label">同步模式</label>' +
+                '<select id="openlist-mode-' + u + '" class="form-input config-input" title="' + modeHelp + '">' + modeOptions(md) + '</select>' +
+                '<small class="config-hint" style="display:block;">' + modeHelp + '</small></div>' +
                 '</div></div>'
         }).join('')
     }
@@ -3285,8 +3298,97 @@ class App {
         return JSON.stringify(selected.map(u => {
             const d = document.getElementById('openlist-dir-' + u + '-download')
             const c = document.getElementById('openlist-dir-' + u + '-cache')
-            return { user: u, enabled: true, downloadDir: (d ? d.value : '').trim(), cacheDir: (c ? c.value : '').trim() }
+            const m = document.getElementById('openlist-mode-' + u)
+            return { user: u, enabled: true, downloadDir: (d ? d.value : '').trim(), cacheDir: (c ? c.value : '').trim(), mode: (m ? m.value : 'upload') }
         }))
+    }
+
+    async testOpenlistConnection() {
+        const form = document.getElementById('openlist-form')
+        if (!form) return
+        const fd = new FormData(form)
+        const payload = {
+            endpoint: (fd.get('openlist.endpoint') || '').trim(),
+            username: fd.get('openlist.username'),
+            password: fd.get('openlist.password'),
+            token: fd.get('openlist.token'),
+            root: (fd.get('openlist.root') || '').trim() || '/tyCloud',
+        }
+        if (!payload.endpoint) {
+            if (window.showError) window.showError('请先填写 OpenList 服务器地址')
+            return
+        }
+        try {
+            const r = await this.request('/api/openlist/test', { method: 'POST', body: JSON.stringify(payload) })
+            if (r && r.success && r.ok) {
+                if (window.showSuccess) window.showSuccess('OpenList 连接成功')
+                else alert('连接成功')
+            } else {
+                if (window.showError) window.showError('连接失败: ' + ((r && r.error) || '未知错误'))
+                else alert('连接失败: ' + ((r && r.error) || ''))
+            }
+        } catch (e) {
+            console.error(e)
+            if (window.showError) window.showError('测试连接出错: ' + (e && e.message || e))
+        }
+    }
+
+    async runOpenlistSync() {
+        try {
+            if (window.showInfo) window.showInfo('正在同步，请稍候…')
+            const r = await this.request('/api/openlist/sync', { method: 'POST', body: JSON.stringify({}) })
+            if (r && r.success) {
+                const s = r.summary || {}
+                const msg = '同步完成：上传 ' + (s.uploaded || 0) + '，下载 ' + (s.downloaded || 0) + '，删除 ' + (s.deleted || 0) +
+                    ((s.errors && s.errors.length) ? ('，错误 ' + s.errors.length + ' 项') : '')
+                if (window.showSuccess) window.showSuccess(msg)
+                else alert(msg)
+                if (s.errors && s.errors.length) console.warn('OpenList 同步错误', s.errors)
+                this.loadOpenlistBackups()
+            } else {
+                if (window.showError) window.showError('同步失败: ' + ((r && r.error) || ''))
+            }
+        } catch (e) {
+            console.error(e)
+            if (window.showError) window.showError('同步出错: ' + (e && e.message || e))
+        }
+    }
+
+    async loadOpenlistBackups() {
+        const box = document.getElementById('openlist-backups-list')
+        if (!box) return
+        box.innerHTML = '<div class="config-hint">加载中…</div>'
+        try {
+            const r = await this.request('/api/openlist/backups')
+            const list = (r && r.list) || []
+            if (!list.length) {
+                box.innerHTML = '<div class="config-hint">暂无备份记录</div>'
+                return
+            }
+            const statusMap = { pending: '待上传', uploading: '上传中', completed: '已完成', verified: '已验证', failed: '失败', deleted: '已删除' }
+            const fmtName = (f) => ((f.name || f.local_path || '').toString().replace(/</g, '&lt;') || '(未知)')
+            box.innerHTML = '<div style="overflow:auto;max-height:420px;">' +
+                '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">' +
+                '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
+                '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
+                '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">附件</th><th style="padding:.4rem .5rem;">更新时间</th>' +
+                '</tr></thead><tbody>' +
+                list.slice(0, 300).map(f => {
+                    const att = (f.attachments || []).length
+                    const d = new Date(f.updated_at || f.created_at || Date.now())
+                    return '<tr style="border-bottom:1px solid var(--border);">' +
+                        '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
+                        '<td style="padding:.4rem .5rem;">' + (f.folder_type || '') + '</td>' +
+                        '<td style="padding:.4rem .5rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
+                        '<td style="padding:.4rem .5rem;">' + (statusMap[f.status] || f.status || '') + '</td>' +
+                        '<td style="padding:.4rem .5rem;">' + att + '</td>' +
+                        '<td style="padding:.4rem .5rem;white-space:nowrap;">' + d.toLocaleString() + '</td>' +
+                        '</tr>'
+                }).join('') + '</tbody></table></div>'
+        } catch (e) {
+            console.error(e)
+            box.innerHTML = '<div class="config-hint" style="color:var(--danger);">加载失败: ' + (e && e.message || e) + '</div>'
+        }
     }
 
     togglePublicNonAdminAccessVisibility() {

@@ -327,6 +327,19 @@ class CacheIndexManager {
 
 export const indexManager = new CacheIndexManager()
 
+/**
+ * OpenList 同步/下载回填缓存索引的对外封装。
+ * 供 openlistBackup 在「下载/双向同步」把远端文件落到本地后登记为缓存条目，
+ * 以及在「删除本地文件」时注销缓存条目，使应用能正确识别本地文件是否存在。
+ */
+export function registerOpenListCacheFile(username: string, item: any, folder: 'cache' | 'music'): void {
+  indexManager.update(username, item, folder)
+}
+
+export function unregisterOpenListCacheFile(username: string, songId: string, folder: 'cache' | 'music', quality?: string): void {
+  indexManager.remove(username, songId, folder, quality)
+}
+
 const COVER_CHECK_VERSION = 4
 
 const getCoverCacheHash = (filename: string, stats?: Stats) => {

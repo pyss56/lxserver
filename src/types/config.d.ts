@@ -69,6 +69,15 @@ declare namespace LX {
      * 备份该用户的缓存目录绝对路径，留空表示不备份缓存目录
      */
     cacheDir: string
+    /**
+     * 同步模式（按用户 + 目录独立设置）：
+     *  - upload        ：仅上传本地新增到 OpenList，保留本地
+     *  - upload-delete ：上传后删除本地文件并清理缓存索引
+     *  - download      ：仅把 OpenList 该用户目录文件拉到本地，并补齐缓存
+     *  - sync          ：双向同步（本地新增上传 / 远端新增下载 / 删除双向检测 / mtime 冲突）
+     * 缺省由 openlist.keepLocalAfterUpload 推导（true→upload，false→upload-delete）
+     */
+    mode?: 'upload' | 'upload-delete' | 'download' | 'sync'
   }
 
   interface Config {
@@ -277,6 +286,11 @@ declare namespace LX {
      * 验证轮询间隔（分钟），默认 5：轮询 openlist 确认文件已落库后标记为 verified
      */
     'openlist.verifyInterval'?: number
+
+    /**
+     * 同步/下载定时触发间隔（分钟），预留配置项；当前仅支持手动触发（UI 按钮），定时未启用
+     */
+    'openlist.syncInterval'?: number
 
     /**
      * 每个用户各自的备份目录配置（JSON 数组，由前端管理），结构见 OpenlistUserBackup

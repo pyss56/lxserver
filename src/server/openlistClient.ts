@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 
 export interface OpenListClientConfig {
   endpoint: string
@@ -177,5 +178,60 @@ export class OpenListClient {
     })
     const data: any = await resp.json().catch(() => ({}))
     if (data?.code !== 200) throw new Error('OpenList 删除失败：' + (data?.message || resp.status))
+  }
+
+  /**
+   * 校验可用性：强制重新登录 + 列根目录，确认账号可用且可达。
+   * 失败抛出带中文说明的错误；成功返回 true。
+   */
+  async testConnection(timeoutMs = 15000): Promise<boolean> {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      this.token = null
+      await this.ensureToken()
+      await this.listDir(this.root)
+      return true
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * 递归列出远端目录下所有条目（含子目录），返回扁平文件列表。
+   * 用于双向同步/下载时比对本地与远端差异。
+   */
+  async listFilesRecursive(remotePath: string, depth = 0, maxDepth = 10): Promise<Array<{ path: string; name: string; size: number; modified: string; isDir: boolean }>> {
+    if (depth > maxDepth) return []
+    const data: any = await this.listDir(remotePath)
+    const content: any[] = data?.content || []
+    const out: Array<{ path: string; name: string; size: number; modified: string; isDir: boolean }> = []
+    for (const item of content) {
+      const full = item.path || `${remotePath}/${item.name}`
+      const isDir = !!item.is_dir
+      out.push({ path: full, name: item.name, size: Number(item.size || 0), modified: item.modified || '', isDir })
+      if (isDir) out.push(...(await this.listFilesRecursive(full, depth + 1, maxDepth)))
+    }
+    return out
+  }
+
+  /**
+   * 下载远端文件到本地路径（经由 getInfo 拿到的直链 raw_url 流式写入）。
+   */
+  async download(remotePath: string, localPath: string, signal?: AbortSignal): Promise<void> {
+    await this.ensureToken()
+    const info = await this.getFileInfo(remotePath)
+    const url = info.rawUrl
+    if (!url) throw new Error('OpenList 无法获取下载直链：' + remotePath)
+    const resp = await fetch(url, { signal })
+    if (!resp.ok) throw new Error('OpenList 下载失败：' + resp.status)
+    await new Promise<void>((resolve, reject) => {
+      const ws = fs.createWriteStream(localPath)
+      const rs = Readable.fromWeb(resp.body as any)
+      rs.on('error', reject)
+      ws.on('error', reject)
+      ws.on('finish', () => resolve())
+      rs.pipe(ws)
+    })
   }
 }
