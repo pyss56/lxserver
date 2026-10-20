@@ -3291,6 +3291,7 @@ class App {
                 if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
                 return (n / 1024 / 1024).toFixed(1) + ' MB'
             }
+            const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
             const rows = list.slice(start, start + pageSize).map(f => {
                 const d = new Date(f.updated_at || f.created_at || Date.now())
                 const color = badgeColor[f.status] || '#64748b'
@@ -3301,13 +3302,20 @@ class App {
                     ? '<button type="button" class="btn-secondary" style="padding:.15rem .6rem;font-size:.72rem;" onclick="app.retryOpenlistBackup(' + f.id + ')">重试</button>'
                     : '<span style="color:var(--text-secondary);">—</span>'
                 const localMark = f.local_exists ? '<span style="color:#22c55e;">✓</span>' : '<span style="color:#ef4444;">✗</span>'
+                const pathStr = f.local_path || f.remote_path || ''
+                const errStr = f.error || ''
+                const errCell = errStr
+                    ? '<span style="color:#ef4444;font-size:.75rem;" title="' + esc(errStr) + '">' + esc(errStr.length > 60 ? errStr.slice(0, 60) + '…' : errStr) + '</span>'
+                    : '<span style="color:var(--text-secondary);">—</span>'
                 return '<tr style="border-bottom:1px solid var(--border);">' +
                     '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
                     '<td style="padding:.4rem .5rem;">' + typeLabel + '</td>' +
-                    '<td style="padding:.4rem .5rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
+                    '<td style="padding:.4rem .5rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
+                    '<td style="padding:.4rem .5rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);font-size:.78rem;" title="' + esc(pathStr) + '">' + esc(pathStr) + '</td>' +
                     '<td style="padding:.4rem .5rem;"><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:.72rem;">' + label + '</span></td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + fmtSize(f.size) + '</td>' +
                     '<td style="padding:.4rem .5rem;text-align:center;">' + localMark + '</td>' +
+                    '<td style="padding:.4rem .5rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + errCell + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + d.toLocaleString() + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + retryBtn + '</td>' +
                     '</tr>'
@@ -3327,7 +3335,8 @@ class App {
                 '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">' +
                 '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
                 '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
-                '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">本地</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
+                '<th style="padding:.4rem .5rem;">路径</th><th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">本地</th>' +
+                '<th style="padding:.4rem .5rem;">异常原因</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table></div>' + pager
         } catch (e) {
             console.error(e)

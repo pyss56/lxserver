@@ -2221,11 +2221,11 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="config-actions">
-                                <button type="button" class="btn-primary" onclick="app.saveOpenlistConfig()">保存配置</button>
-                                <button type="button" class="btn-secondary" onclick="app.loadOpenlistConfig()">重新加载</button>
-                                <button type="button" class="btn-secondary" onclick="app.testOpenlistConnection()">测试连接</button>
-                                <button type="button" class="btn-secondary" onclick="app.runOpenlistSync()">立即同步</button>
+                            <div class="config-actions" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;">
+                                <button type="button" class="btn-primary" style="width:auto;" onclick="app.saveOpenlistConfig()">保存配置</button>
+                                <button type="button" class="btn-secondary" style="width:auto;" onclick="app.loadOpenlistConfig()">重新加载</button>
+                                <button type="button" class="btn-secondary" style="width:auto;" onclick="app.testOpenlistConnection()">测试连接</button>
+                                <button type="button" class="btn-secondary" style="width:auto;" onclick="app.runOpenlistSync()">立即同步</button>
                             </div>
                         </form>
                         </div><!-- /openlist-pane-config -->
@@ -2241,9 +2241,8 @@
                                 </div>
                             </div>
                             <div class="config-card-body">
-                                <div class="config-actions" style="flex-wrap:wrap;gap:.5rem;align-items:center;">
-                                    <button type="button" class="btn-secondary" onclick="app.loadOpenlistBackups()">刷新</button>
-                                    <button type="button" class="btn-primary" onclick="app.runOpenlistSync()">立即全量同步</button>
+                                <div class="config-actions" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
+                                    <button type="button" class="btn-primary" style="width:auto;" onclick="app.runOpenlistSync()">立即全量同步</button>
                                     <select id="olb-filter-user" class="form-input config-input" style="width:auto;" onchange="app.applyOpenlistFilter()"><option value="">全部用户</option></select>
                                     <select id="olb-filter-folder" class="form-input config-input" style="width:auto;" onchange="app.applyOpenlistFilter()">
                                         <option value="">全部目录</option>
@@ -2261,12 +2260,13 @@
                                     </select>
                                     <input type="text" id="olb-filter-name" class="form-input config-input" style="width:auto;min-width:150px;" placeholder="文件名模糊" oninput="app.scheduleOpenlistReload()" />
                                     <input type="text" id="olb-filter-path" class="form-input config-input" style="width:auto;min-width:150px;" placeholder="路径包含" oninput="app.scheduleOpenlistReload()" />
-                                    <button type="button" class="btn-secondary" style="padding:.3rem .7rem;font-size:.8rem;" onclick="app.clearOpenlistFilters()">清除筛选</button>
+                                    <button type="button" class="btn-primary" style="width:auto;" onclick="app.loadOpenlistBackups()">查询</button>
+                                    <button type="button" class="btn-secondary" style="width:auto;padding:.3rem .7rem;font-size:.8rem;" onclick="app.clearOpenlistFilters()">清除筛选</button>
                                     <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem;color:var(--text-secondary);cursor:pointer;">
                                         <input type="checkbox" id="olb-autorefresh" onchange="app.toggleOpenlistAutoRefresh()" /> 自动刷新
                                     </label>
                                 </div>
-                                <div id="openlist-backups-list"><div class="config-hint">点击「刷新」查看备份记录</div></div>
+                                <div id="openlist-backups-list"><div class="config-hint">点击「查询」查看备份记录</div></div>
                             </div>
                         </div>
                         </div><!-- /openlist-pane-records -->
