@@ -3060,8 +3060,13 @@ class App {
             form.elements['openlist.keepLocalAfterUpload'].checked = config['openlist.keepLocalAfterUpload'] !== false
             form.elements['openlist.includeNonAudio'].checked = config['openlist.includeNonAudio'] === true
             form.elements['openlist.verifyInterval'].value = config['openlist.verifyInterval'] || 5
+            form.elements['openlist.port'].value = config['openlist.port'] || 9528
             this.toggleOpenlistVisibility()
-            form.elements['openlist.enable'].onchange = () => this.toggleOpenlistVisibility()
+            form.elements['openlist.enable'].onchange = () => {
+                this.toggleOpenlistVisibility()
+                const pf = form.elements['openlist.port']
+                if (form.elements['openlist.enable'].checked && (!pf.value || pf.value.trim() === '')) pf.value = '9528'
+            }
 
             let users = []
             try {
@@ -3090,6 +3095,7 @@ class App {
             'openlist.keepLocalAfterUpload': fd.get('openlist.keepLocalAfterUpload') === 'on',
             'openlist.includeNonAudio': fd.get('openlist.includeNonAudio') === 'on',
             'openlist.verifyInterval': parseInt(fd.get('openlist.verifyInterval')) || 5,
+            'openlist.port': parseInt(fd.get('openlist.port')) || 9528,
             'openlist.userBackups': this.collectOpenlistUserBackups(),
         }
         try {

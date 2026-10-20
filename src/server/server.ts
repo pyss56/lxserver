@@ -7293,6 +7293,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'openlist.syncInterval': global.lx.config['openlist.syncInterval'] || 60,
             'openlist.userBackups': global.lx.config['openlist.userBackups'] || '[]',
             'openlist.includeNonAudio': global.lx.config['openlist.includeNonAudio'] === true,
+            'openlist.port': global.lx.config['openlist.port'] || 9528,
           }
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -7383,6 +7384,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['openlist.syncInterval'] !== undefined) global.lx.config['openlist.syncInterval'] = parseInt(newConfig['openlist.syncInterval']) || 60
               if (newConfig['openlist.userBackups'] !== undefined) global.lx.config['openlist.userBackups'] = newConfig['openlist.userBackups']
               if (newConfig['openlist.includeNonAudio'] !== undefined) global.lx.config['openlist.includeNonAudio'] = newConfig['openlist.includeNonAudio']
+              if (newConfig['openlist.port'] !== undefined) global.lx.config['openlist.port'] = parseInt(newConfig['openlist.port']) || 9528
 
               const validateAndCleanProxy = (addr: any) => {
                 if (!addr || typeof addr !== 'string') return ''
@@ -7656,6 +7658,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
                 'openlist.syncInterval': global.lx.config['openlist.syncInterval'] || 60,
                 'openlist.userBackups': global.lx.config['openlist.userBackups'] || '[]',
                 'openlist.includeNonAudio': global.lx.config['openlist.includeNonAudio'] === true,
+                'openlist.port': global.lx.config['openlist.port'] || 9528,
                 'singer.sourcePriority': global.lx.config['singer.sourcePriority'],
                 'artist.maxFetchPages': global.lx.config['artist.maxFetchPages'],
                 'cache.namingPattern': global.lx.config['cache.namingPattern'],

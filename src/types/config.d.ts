@@ -283,6 +283,11 @@ declare namespace LX {
     'openlist.root'?: string
 
     /**
+     * OpenList 独立端口（lxserver 侧暴露的 OpenList 相关独立服务端口），默认 9528，允许修改
+     */
+    'openlist.port'?: number
+
+    /**
      * 上传完成后是否保留本地文件，默认 true（保留）
      */
     'openlist.keepLocalAfterUpload'?: boolean

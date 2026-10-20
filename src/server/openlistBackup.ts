@@ -80,6 +80,7 @@ interface BackupConfig {
   verifyInterval: number
   includeNonAudio: boolean
   syncInterval: number
+  port: number
   userBackups: UserBackupCfg[]
 }
 
@@ -99,6 +100,7 @@ function getConfig(): BackupConfig {
     verifyInterval: Number(c['openlist.verifyInterval'] || 5),
     includeNonAudio: c['openlist.includeNonAudio'] === true,
     syncInterval: Number(c['openlist.syncInterval'] || 60),
+    port: Number(c['openlist.port'] || 9528),
     userBackups: parseUserBackups(c['openlist.userBackups']),
   }
 }

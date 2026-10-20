@@ -64,6 +64,7 @@ const config: LX.Config = {
   'openlist.keepLocalAfterUpload': true, // 上传完成后保留本地文件
   'openlist.verifyInterval': 5, // 验证轮询间隔（分钟）
   'openlist.includeNonAudio': false, // 是否一并备份下载/缓存目录中的图片等非音频文件
+  'openlist.port': 9528, // OpenList 独立端口（lxserver 侧暴露的 OpenList 相关独立服务端口；开启时默认 9528，可修改）
   'openlist.userBackups': '[]', // JSON 数组：[{user,enabled,backupDownload,backupCache,mode?}]（目录路径由后端自动拼接，无需填写）
 
   // 本地配置备份（config.js 每日一份本地副本）
