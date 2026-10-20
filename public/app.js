@@ -3337,13 +3337,13 @@ class App {
                     '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + typeLabel + '</td>' +
                     '<td style="padding:.4rem .5rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
-                    '<td style="padding:.4rem .5rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);font-size:.78rem;" title="' + esc(pathStr) + '">' + esc(pathStr) + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;"><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:.72rem;">' + label + '</span></td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + fmtSize(f.size) + '</td>' +
                     '<td style="padding:.4rem .5rem;text-align:center;">' + localMark + '</td>' +
                     '<td style="padding:.4rem .5rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + errCell + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + d.toLocaleString() + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + retryBtn + '</td>' +
+                    '<td style="padding:.4rem .5rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);font-size:.78rem;" title="' + esc(pathStr) + '">' + esc(pathStr) + '</td>' +
                     '</tr>'
             }).join('')
             const pager = '<div class="olb-pager" style="display:flex;gap:.4rem;align-items:center;justify-content:flex-end;margin-top:.6rem;font-size:.82rem;color:var(--text-secondary);flex-wrap:wrap;">' +
@@ -3362,8 +3362,9 @@ class App {
                 '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
                 '<th style="padding:.4rem .5rem;text-align:center;width:1%;"><input type="checkbox" id="olb-selall" onchange="app.toggleOpenlistSelectAll(this)"></th>' +
                 '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
-                '<th style="padding:.4rem .5rem;">路径</th><th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">本地</th>' +
+                '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">本地</th>' +
                 '<th style="padding:.4rem .5rem;">异常原因</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
+                '<th style="padding:.4rem .5rem;">路径</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table></div>' + pager
             this.updateOlbSelCount()
         } catch (e) {
