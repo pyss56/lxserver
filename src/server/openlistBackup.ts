@@ -854,11 +854,17 @@ export async function retryBackup(id: number): Promise<{ ok: boolean; message?: 
  * 音乐库文件（folder_type=music）仅软删除记录、不删除用户实际音频，避免误删聆听源。
  * 删除前用 countLocalPathRefs 确认本地文件未被其它活跃记录引用，避免误删共享文件。
  */
-export async function deleteOpenlistBackups(ids: number[]): Promise<{ deleted: number }> {
+export async function deleteOpenlistBackups(ids: number[]): Promise<{
+  deleted: number
+  remoteRemoved: number
+  remoteFailed: string[]
+}> {
   const db = getBackupDb()
   const cl = getClient()
   const ts = Date.now()
+  const remoteFailed: string[] = []
   let deleted = 0
+  let remoteRemoved = 0
   for (const id of ids) {
     const row = getBackupById(id)
     if (!row || row.deleted_at) continue
@@ -871,8 +877,15 @@ export async function deleteOpenlistBackups(ids: number[]): Promise<{ deleted: n
     ).run(ts, 'deleted', id)
     // 附件：删远端（仅当无其它活跃记录引用同一远端路径）+ 删本地
     for (const a of atts) {
-      if (a.remote_path && cl && countRemotePathRefs(a.remote_path, id, a.id) === 0) {
-        try { await cl.remove(a.remote_path) } catch { /* ignore */ }
+      if (a.remote_path) {
+        if (cl && countRemotePathRefs(a.remote_path, id, a.id) === 0) {
+          try {
+            await cl.remove(a.remote_path)
+            remoteRemoved++
+          } catch (e: any) {
+            remoteFailed.push(`${a.remote_path} (${e?.message || e})`)
+          }
+        }
       }
       if (a.local_path && fs.existsSync(a.local_path) && countLocalPathRefs(a.local_path, id, a.id) === 0) {
         try { fs.unlinkSync(a.local_path); softDeleteLocalFile(row.user, a.local_path) } catch { /* ignore */ }
@@ -883,8 +896,17 @@ export async function deleteOpenlistBackups(ids: number[]): Promise<{ deleted: n
       'UPDATE openlist_backup_files SET deleted_at = ?, status = ?, error = NULL WHERE id = ?',
     ).run(ts, 'deleted', id)
     // 主文件远端：删远端（仅当无其它活跃记录引用同一远端路径）
-    if (row.remote_path && cl && countRemotePathRefs(row.remote_path, id, -1) === 0) {
-      try { await cl.remove(row.remote_path) } catch { /* ignore */ }
+    if (row.remote_path) {
+      if (cl && countRemotePathRefs(row.remote_path, id, -1) === 0) {
+        try {
+          await cl.remove(row.remote_path)
+          remoteRemoved++
+        } catch (e: any) {
+          remoteFailed.push(`${row.remote_path} (${e?.message || e})`)
+        }
+      } else if (!cl) {
+        remoteFailed.push(`${row.remote_path} (OpenList 未连接，跳过远端删除)`)
+      }
     }
     // 主文件本地：仅 cache 类型物理删除本地临时副本（music 为用户实际文件，仅软删记录）
     if (row.folder_type === 'cache' && row.local_path && fs.existsSync(row.local_path) && countLocalPathRefs(row.local_path, id, -1) === 0) {
@@ -893,5 +915,11 @@ export async function deleteOpenlistBackups(ids: number[]): Promise<{ deleted: n
     removeLocalCache(row)
     deleted++
   }
-  return { deleted }
+  if (remoteFailed.length) {
+    console.warn(
+      '[openlist] 删除备份记录时以下远端文件未能从网盘删除（记录已软删，但网盘文件残留）：\n' +
+        remoteFailed.join('\n'),
+    )
+  }
+  return { deleted, remoteRemoved, remoteFailed }
 }

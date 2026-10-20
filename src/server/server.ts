@@ -7916,7 +7916,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             }
             const r = await deleteOpenlistBackups(ids)
             res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ success: true, deleted: r.deleted }))
+            res.end(JSON.stringify({ success: true, deleted: r.deleted, remoteRemoved: r.remoteRemoved, remoteFailed: r.remoteFailed }))
           } catch (e: any) {
             res.writeHead(500, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ success: false, error: e?.message || String(e) }))

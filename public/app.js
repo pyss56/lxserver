@@ -3053,8 +3053,6 @@ class App {
             if (!form) return
             form.elements['openlist.enable'].checked = config['openlist.enable'] === true
             form.elements['openlist.endpoint'].value = config['openlist.endpoint'] || ''
-            form.elements['openlist.username'].value = config['openlist.username'] || ''
-            form.elements['openlist.password'].value = config['openlist.password'] || ''
             form.elements['openlist.token'].value = config['openlist.token'] || ''
             form.elements['openlist.root'].value = config['openlist.root'] || '/tyCloud'
             form.elements['openlist.keepLocalAfterUpload'].checked = config['openlist.keepLocalAfterUpload'] !== false
@@ -3083,8 +3081,6 @@ class App {
         const cfg = {
             'openlist.enable': fd.get('openlist.enable') === 'on',
             'openlist.endpoint': (fd.get('openlist.endpoint') || '').trim(),
-            'openlist.username': fd.get('openlist.username'),
-            'openlist.password': fd.get('openlist.password'),
             'openlist.token': fd.get('openlist.token'),
             'openlist.root': (fd.get('openlist.root') || '').trim() || '/tyCloud',
             'openlist.keepLocalAfterUpload': fd.get('openlist.keepLocalAfterUpload') === 'on',
@@ -3157,13 +3153,10 @@ class App {
             return '<div class="config-field" style="border-left:3px solid var(--accent);padding-left:.75rem;margin-top:.5rem">' +
                 '<label class="config-label">用户 <b>' + u + '</b> 的同步配置</label>' +
                 '<div class="config-field-row">' +
-                '<div class="config-field"><label class="config-label">备份下载目录</label>' + toggleHtml('openlist-dl-sw-' + u, dlOn) +
-                '<small class="config-hint" style="display:block;">自动使用该用户音乐目录，无需填写路径</small></div>' +
-                '<div class="config-field"><label class="config-label">备份缓存目录</label>' + toggleHtml('openlist-ca-sw-' + u, caOn) +
-                '<small class="config-hint" style="display:block;">自动使用该用户缓存目录，无需填写路径</small></div>' +
-                '<div class="config-field"><label class="config-label">同步模式</label>' +
-                '<select id="openlist-mode-' + u + '" class="form-input config-input" title="' + modeHelp + '">' + modeOptions(md) + '</select>' +
-                '<small class="config-hint" style="display:block;">' + modeHelp + '</small></div>' +
+                '<div class="config-field"><label class="config-label">备份下载目录 <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="自动使用该用户音乐目录，无需填写路径">?</span></label>' + toggleHtml('openlist-dl-sw-' + u, dlOn) + '</div>' +
+                '<div class="config-field"><label class="config-label">备份缓存目录 <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="自动使用该用户缓存目录，无需填写路径">?</span></label>' + toggleHtml('openlist-ca-sw-' + u, caOn) + '</div>' +
+                '<div class="config-field"><label class="config-label">同步模式 <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="' + modeHelp + '">?</span></label>' +
+                '<select id="openlist-mode-' + u + '" class="form-input config-input" title="' + modeHelp + '">' + modeOptions(md) + '</select></div>' +
                 '</div></div>'
         }).join('')
     }
@@ -3185,8 +3178,6 @@ class App {
         const fd = new FormData(form)
         const payload = {
             endpoint: (fd.get('openlist.endpoint') || '').trim(),
-            username: fd.get('openlist.username'),
-            password: fd.get('openlist.password'),
             token: fd.get('openlist.token'),
             root: (fd.get('openlist.root') || '').trim() || '/tyCloud',
         }
@@ -3448,12 +3439,31 @@ class App {
         } catch (e) { /* ignore */ }
     }
 
-    toggleOpenlistAutoRefresh() {
-        const cb = document.getElementById('olb-autorefresh')
-        if (this._olbTimer) { clearInterval(this._olbTimer); this._olbTimer = null }
-        if (cb && cb.checked) {
-            this._olbTimer = setInterval(() => this.loadOpenlistBackups(true), 10000)
+    toggleHelp(el) {
+        const text = el.getAttribute('data-help') || ''
+        const existing = document.querySelector('.help-pop')
+        if (existing) {
+            if (existing._owner === el) { existing.remove(); return }
+            existing.remove()
         }
+        if (!text) return
+        const pop = document.createElement('div')
+        pop.className = 'help-pop'
+        pop._owner = el
+        pop.textContent = text
+        document.body.appendChild(pop)
+        const r = el.getBoundingClientRect()
+        pop.style.top = (window.scrollY + r.bottom + 6) + 'px'
+        pop.style.left = (window.scrollX + r.left) + 'px'
+        const pr = pop.getBoundingClientRect()
+        if (pr.right > window.innerWidth - 8) pop.style.left = (window.scrollX + r.left - pr.width + r.width) + 'px'
+        if (pr.bottom > window.innerHeight - 8) pop.style.top = (window.scrollY + r.top - pr.height - 6) + 'px'
+        setTimeout(() => {
+            const onDocClick = (e) => {
+                if (!pop.contains(e.target) && e.target !== el) { pop.remove(); document.removeEventListener('click', onDocClick) }
+            }
+            document.addEventListener('click', onDocClick)
+        }, 0)
     }
 
     switchOpenlistTab(name) {

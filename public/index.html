@@ -2119,6 +2119,11 @@
 
                 <!-- OpenList 备份配置视图 -->
                 <div id="view-openlist" class="view">
+                    <style>
+                        .help-icon{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:.35rem;border-radius:50%;cursor:pointer;user-select:none;background:var(--accent,#3b82f6);color:#fff;font-size:10px;font-weight:700;line-height:1;vertical-align:middle;}
+                        .help-icon:hover{opacity:.85;}
+                        .help-pop{position:absolute;z-index:9999;max-width:300px;width:max-content;background:#20242e;color:#e5e7eb;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:.55rem .7rem;font-size:.8rem;line-height:1.55;box-shadow:0 8px 24px rgba(0,0,0,.4);white-space:normal;}
+                    </style>
                     <div class="webdav-container">
                         <div class="backup-segmented-tabs glass" style="margin-bottom:1rem;">
                             <button type="button" class="backup-tab-btn active" id="tab-btn-openlist-config" onclick="app.switchOpenlistTab('config')">
@@ -2131,7 +2136,7 @@
                         <div id="openlist-pane-config" class="backup-tab-pane active">
                         <div class="setup-guide-card glass">
                             <h3>OpenList 音频备份配置</h3>
-                            <p>配置 OpenList 网盘连接与按用户备份规则。启用后，所选用户的缓存 / 下载音频将按各自设定的同步模式处理。支持四种模式：上传（保留本地）、上传后删除本地、下载（远端→本地并补齐缓存）、双向同步。图片等非音频作为媒体文件附件一并处理。</p>
+                            <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="配置 OpenList 网盘连接与按用户备份规则。启用后，所选用户的缓存 / 下载音频将按各自设定的同步模式处理。支持四种模式：上传（保留本地）、上传后删除本地、下载（远端→本地并补齐缓存）、双向同步。图片等非音频作为媒体文件附件一并处理。">?</span>
                         </div>
                         <form id="openlist-form" class="config-form-openlist">
                             <div class="config-card glass">
@@ -2147,8 +2152,7 @@
                                 <div class="config-card-body">
                                     <div class="config-toggle-row">
                                         <div class="config-toggle-info">
-                                            <span class="config-toggle-label">启用 OpenList 音频备份</span>
-                                            <span class="config-toggle-desc">开启后按用户配置备份音频文件</span>
+                                            <span class="config-toggle-label">启用 OpenList 音频备份 <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="开启后按用户配置备份音频文件">?</span></span>
                                         </div>
                                         <label class="toggle-switch">
                                             <input type="checkbox" name="openlist.enable" id="openlist-enable" />
@@ -2161,30 +2165,21 @@
                                             <label class="config-label">OpenList 服务器地址</label>
                                             <input type="text" name="openlist.endpoint" class="form-input config-input" placeholder="http://127.0.0.1:5244" />
                                         </div>
-                                        <div class="config-field-row">
-                                            <div class="config-field">
-                                                <label class="config-label">账号</label>
-                                                <input type="text" name="openlist.username" class="form-input config-input" />
-                                            </div>
-                                            <div class="config-field">
-                                                <label class="config-label">密码</label>
-                                                <input type="password" name="openlist.password" class="form-input config-input" />
-                                            </div>
-                                        </div>
                                         <div class="config-field">
-                                            <label class="config-label">预置令牌（可选，优先于账号密码）</label>
+                                            <label class="config-label">令牌（OpenList API Token）</label>
                                             <input type="text" name="openlist.token" class="form-input config-input" placeholder="openlist-xxxx" />
+                                            <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="在 OpenList 网页「设置 → 其他」中生成；所有接口均通过令牌认证，不再支持账号密码方式">?</span>
                                         </div>
                                         <div class="config-field">
                                             <label class="config-label">根目录（OpenList 挂载名）</label>
                                             <input type="text" name="openlist.root" class="form-input config-input" placeholder="/tyCloud" />
-                                            <small class="config-hint">OpenList 中的挂载路径，例如天翼云盘为 /tyCloud</small>
+                                            <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="OpenList 中的挂载路径，例如天翼云盘为 /tyCloud">?</span>
                                         </div>
                                         <div class="config-field-row">
                                             <div class="config-field">
                                                 <label class="config-label">验证轮询间隔（分钟）</label>
                                                 <input type="number" name="openlist.verifyInterval" class="form-input config-input" value="5" min="1" />
-                                                <small class="config-hint">轮询确认文件已落库后标记为「已验证」</small>
+                                                <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="轮询确认文件已落库后标记为「已验证」">?</span>
                                             </div>
                                             <div class="config-toggle-row" style="flex:1;">
                                                 <div class="config-toggle-info">
@@ -2198,7 +2193,7 @@
                                             <div class="config-toggle-row" style="flex:1;">
                                                 <div class="config-toggle-info">
                                                     <span class="config-toggle-label">备份目录中的图片等非音频文件</span>
-                                                    <small class="config-hint" style="display:block;">开启后，下载 / 缓存目录里的图片也会一并上传</small>
+                                                    <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="开启后，下载 / 缓存目录里的图片也会一并上传">?</span>
                                                 </div>
                                                 <label class="toggle-switch">
                                                     <input type="checkbox" name="openlist.includeNonAudio" />
@@ -2209,7 +2204,7 @@
                                         <div class="config-divider"></div>
                                         <div class="config-field">
                                             <label class="config-label">备份用户（多选）</label>
-                                            <small class="config-hint">选择开启音频备份的用户；每个用户可单独开关下载 / 缓存目录备份（路径自动使用该用户的音乐 / 缓存目录，无需手动填写）</small>
+                                            <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="选择开启音频备份的用户；每个用户可单独开关下载 / 缓存目录备份（路径自动使用该用户的音乐 / 缓存目录，无需手动填写）">?</span>
                                             <div id="tag-group-openlist-users" class="tag-group-container"></div>
                                             <input type="hidden" name="openlist.userBackupUsers" />
                                         </div>
@@ -2236,14 +2231,17 @@
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"></path><path d="M7 14l4-4 3 3 5-5"></path></svg>
                                 </div>
                                 <div>
-                                    <h3 class="config-card-title">同步状态</h3>
-                                    <p class="config-card-desc">查看已备份文件与同步结果（含图片等附件计数）</p>
+                                    <h3 class="config-card-title">同步状态 <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="查看已备份文件与同步结果（含图片等附件计数）">?</span></h3>
                                 </div>
                             </div>
                             <div id="openlist-status-cards" class="olb-status-cards" style="display:flex;flex-wrap:wrap;gap:.6rem;margin:.4rem 0 .2rem;"></div>
                             <div class="config-card-body">
-                                <div class="config-actions" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
+                                <div class="config-actions" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.6rem;">
                                     <button type="button" class="btn-primary" style="width:auto;" onclick="app.runOpenlistSync()">立即全量同步</button>
+                                    <button type="button" id="olb-bulkdel" class="btn-secondary" style="width:auto;padding:.3rem .7rem;font-size:.8rem;" onclick="app.deleteSelectedOpenlist()" disabled>批量删除</button>
+                                    <span id="olb-selcount" style="font-size:.8rem;color:var(--text-secondary);"></span>
+                                </div>
+                                <div class="config-actions" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
                                     <select id="olb-filter-user" class="form-input config-input" style="width:auto;" onchange="app.applyOpenlistFilter()"><option value="">全部用户</option></select>
                                     <select id="olb-filter-folder" class="form-input config-input" style="width:auto;" onchange="app.applyOpenlistFilter()">
                                         <option value="">全部目录</option>
@@ -2263,13 +2261,8 @@
                                     <input type="text" id="olb-filter-path" class="form-input config-input" style="width:auto;min-width:150px;" placeholder="路径包含" oninput="app.scheduleOpenlistReload()" />
                                     <button type="button" class="btn-primary" style="width:auto;" onclick="app.loadOpenlistBackups()">查询</button>
                                     <button type="button" class="btn-secondary" style="width:auto;padding:.3rem .7rem;font-size:.8rem;" onclick="app.clearOpenlistFilters()">清除筛选</button>
-                                    <button type="button" id="olb-bulkdel" class="btn-secondary" style="width:auto;padding:.3rem .7rem;font-size:.8rem;" onclick="app.deleteSelectedOpenlist()" disabled>批量删除</button>
-                                    <span id="olb-selcount" style="font-size:.8rem;color:var(--text-secondary);"></span>
-                                    <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem;color:var(--text-secondary);cursor:pointer;">
-                                        <input type="checkbox" id="olb-autorefresh" onchange="app.toggleOpenlistAutoRefresh()" /> 自动刷新
-                                    </label>
                                 </div>
-                                <div id="openlist-backups-list"><div class="config-hint">点击「查询」查看备份记录</div></div>
+                                <div id="openlist-backups-list"><span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="点击「查询」查看备份记录">?</span></div>
                             </div>
                         </div>
                         </div><!-- /openlist-pane-records -->
