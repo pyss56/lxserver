@@ -33,6 +33,11 @@ import {
   listAttachmentsToVerify,
   listAttachmentsByStatus,
   getBackupById,
+  getBackupDb,
+  countLocalPathRefs,
+  countRemotePathRefs,
+  upsertLocalFile,
+  softDeleteLocalFile,
 } from './openlistBackupDb'
 
 type SyncMode = 'upload-delete' | 'upload' | 'sync' | 'download'
@@ -134,6 +139,13 @@ function categoryOf(ext: string): 'image' | 'lyric' | 'other' {
   if (['lrc', 'txt'].includes(e)) return 'lyric'
   if (NON_AUDIO_EXT.includes(e)) return 'image'
   return 'other'
+}
+
+/** 将 OpenList 的 modified 字符串解析为毫秒时间戳；无法解析则返回 null */
+function parseMod(e?: string): number | null {
+  if (!e) return null
+  const t = Date.parse(e)
+  return Number.isNaN(t) ? null : t
 }
 
 let client: OpenListClient | null = null
@@ -256,6 +268,7 @@ async function refetchLocalFile(row: any): Promise<boolean> {
     if (!resp.ok) return false
     const buf = Buffer.from(await resp.arrayBuffer())
     fs.writeFileSync(row.local_path, buf)
+    upsertLocalFile({ user: row.user, source: row.source, folderType: row.folder_type, localPath: row.local_path })
     return fs.existsSync(row.local_path)
   } catch {
     return false
@@ -304,6 +317,7 @@ async function downloadOne(row: any, cl: OpenListClient, mode: SyncMode): Promis
     setBackupStatus(row.id, 'uploading')
     fs.mkdirSync(path.dirname(row.local_path), { recursive: true })
     await cl.download(row.remote_path, row.local_path)
+    upsertLocalFile({ user: row.user, source: row.source, folderType: row.folder_type, localPath: row.local_path })
     const isAud = isAudio(row.local_path)
     let size = 0
     try { size = fs.statSync(row.local_path).size } catch { /* ignore */ }
@@ -482,16 +496,17 @@ export async function verifyPending(): Promise<void> {
       try {
         const info = await cl.getFileInfo(row.remote_path)
         if (info && info.size != null) {
-          setBackupStatus(row.id, 'verified', { size: info.size, remotePath: row.remote_path })
+          setBackupStatus(row.id, 'verified', { size: info.size, remotePath: row.remote_path, remoteMtime: parseMod(info.modified) })
           const mode = effectiveModeFromRow(row, cfg)
           if (mode === 'upload-delete' && row.local_path && fs.existsSync(row.local_path)) {
             try {
               fs.unlinkSync(row.local_path)
               removeLocalCache(row)
+              softDeleteLocalFile(row.user, row.local_path)
               // 级联删除本地附件：仅当该附件自身已 verified 且未被其它备份引用时（避免附件仍在上传中被误删）
               for (const a of listAttachments(row.id)) {
                 if (a.status === 'verified' && a.local_path && fs.existsSync(a.local_path) && countRefsToLocalPath(a.local_path, row.id) === 0) {
-                  try { fs.unlinkSync(a.local_path) } catch { /* ignore */ }
+                  try { fs.unlinkSync(a.local_path); softDeleteLocalFile(row.user, a.local_path) } catch { /* ignore */ }
                 }
               }
             } catch { /* ignore */ }
@@ -703,12 +718,12 @@ async function deletionDetection(
       setBackupStatus(row.id, 'deleted')
       summary.deleted++
     } else if (localExists && !remoteExists) {
-      // 远端已删 -> 删本地 + 注销缓存
-      try { if (row.local_path) fs.unlinkSync(row.local_path) } catch { /* ignore */ }
+      // 远端已删 -> 删本地 + 注销缓存 + 软删本地文件登记
+      try { if (row.local_path) { fs.unlinkSync(row.local_path); softDeleteLocalFile(row.user, row.local_path) } } catch { /* ignore */ }
       removeLocalCache(row)
       setBackupStatus(row.id, 'deleted')
       for (const a of listAttachments(row.id)) {
-        if (a.local_path) { try { fs.unlinkSync(a.local_path) } catch { /* ignore */ } }
+        if (a.local_path) { try { fs.unlinkSync(a.local_path); softDeleteLocalFile(row.user, a.local_path) } catch { /* ignore */ } }
         setAttachmentStatus(a.id, 'deleted')
       }
       summary.deleted++
@@ -761,8 +776,19 @@ export async function runSyncNow(opts: { user?: string; folder?: 'cache' | 'musi
 
 export function listBackups(): any[] {
   ensureBackupTables()
-  const files = listAllBackups()
-  return files.map((f) => ({ ...f, local_exists: f.local_path ? fs.existsSync(f.local_path) : false, attachments: listAttachments(f.id) }))
+  const db = getBackupDb()
+  // 本地是否存在：由 openlist_local_files 表（排除软删除）通过 (user, local_path) 关联 JOIN 得出，
+  // 不再依赖 fs.existsSync，也无需前端二次请求。
+  const files = db.prepare(`
+    SELECT f.*,
+      (SELECT 1 FROM openlist_local_files l
+        WHERE l.user = f.user AND l.local_path = f.local_path AND l.deleted_at IS NULL
+        LIMIT 1) AS local_exists
+    FROM openlist_backup_files f
+    WHERE f.deleted_at IS NULL
+    ORDER BY f.updated_at DESC
+  `).all() as any[]
+  return files.map((f) => ({ ...f, local_exists: !!f.local_exists, attachments: listAttachments(f.id) }))
 }
 
 /**
@@ -777,6 +803,7 @@ export async function retryBackup(id: number): Promise<{ ok: boolean; message?: 
   if (!cl) return { ok: false, message: '无法连接 OpenList（未配置或登录失败）' }
   const row = getBackupById(id)
   if (!row) return { ok: false, message: '备份记录不存在' }
+  if (row.deleted_at) return { ok: false, message: '该记录已删除' }
   const mode = effectiveModeFromRow(row, cfg)
   try {
     if (mode === 'download' || mode === 'sync') {
@@ -807,9 +834,9 @@ export async function retryBackup(id: number): Promise<{ ok: boolean; message?: 
       let remoteInfo: any = null
       try { remoteInfo = await cl.getFileInfo(row.remote_path) } catch { remoteInfo = null }
       if (remoteInfo && remoteInfo.size != null) {
-        setBackupStatus(id, 'verified', { size: remoteInfo.size, remotePath: row.remote_path })
+        setBackupStatus(id, 'verified', { size: remoteInfo.size, remotePath: row.remote_path, remoteMtime: parseMod(remoteInfo.modified) })
         if (mode === 'upload-delete') {
-          try { fs.unlinkSync(row.local_path); removeLocalCache(row) } catch { /* 忽略 */ }
+          try { fs.unlinkSync(row.local_path); removeLocalCache(row); softDeleteLocalFile(row.user, row.local_path) } catch { /* 忽略 */ }
         }
         return { ok: true, message: '远端文件已存在，已标记为完成' }
       }
@@ -819,4 +846,52 @@ export async function retryBackup(id: number): Promise<{ ok: boolean; message?: 
   } catch (e: any) {
     return { ok: false, message: '重试异常：' + String(e?.message || e) }
   }
+}
+
+/**
+ * 批量软删除备份记录：将指定记录及依附于它们的附件记录标记为 deleted（deleted_at），
+ * 同时物理删除缓存音频副本（folder_type=cache 的本地临时副本）与所有绑定附件的本地文件；
+ * 音乐库文件（folder_type=music）仅软删除记录、不删除用户实际音频，避免误删聆听源。
+ * 删除前用 countLocalPathRefs 确认本地文件未被其它活跃记录引用，避免误删共享文件。
+ */
+export async function deleteOpenlistBackups(ids: number[]): Promise<{ deleted: number }> {
+  const db = getBackupDb()
+  const cl = getClient()
+  const ts = Date.now()
+  let deleted = 0
+  for (const id of ids) {
+    const row = getBackupById(id)
+    if (!row || row.deleted_at) continue
+    const atts = db.prepare(
+      'SELECT * FROM openlist_backup_attachments WHERE backup_file_id = ?',
+    ).all(id) as any[]
+    // 先软删除附件记录（避免后续远程引用计数把同属本记录的附件误判为「被其它活跃记录引用」）
+    db.prepare(
+      'UPDATE openlist_backup_attachments SET deleted_at = ?, status = ? WHERE backup_file_id = ?',
+    ).run(ts, 'deleted', id)
+    // 附件：删远端（仅当无其它活跃记录引用同一远端路径）+ 删本地
+    for (const a of atts) {
+      if (a.remote_path && cl && countRemotePathRefs(a.remote_path, id, a.id) === 0) {
+        try { await cl.remove(a.remote_path) } catch { /* ignore */ }
+      }
+      if (a.local_path && fs.existsSync(a.local_path) && countLocalPathRefs(a.local_path, id, a.id) === 0) {
+        try { fs.unlinkSync(a.local_path); softDeleteLocalFile(row.user, a.local_path) } catch { /* ignore */ }
+      }
+    }
+    // 软删除主记录
+    db.prepare(
+      'UPDATE openlist_backup_files SET deleted_at = ?, status = ?, error = NULL WHERE id = ?',
+    ).run(ts, 'deleted', id)
+    // 主文件远端：删远端（仅当无其它活跃记录引用同一远端路径）
+    if (row.remote_path && cl && countRemotePathRefs(row.remote_path, id, -1) === 0) {
+      try { await cl.remove(row.remote_path) } catch { /* ignore */ }
+    }
+    // 主文件本地：仅 cache 类型物理删除本地临时副本（music 为用户实际文件，仅软删记录）
+    if (row.folder_type === 'cache' && row.local_path && fs.existsSync(row.local_path) && countLocalPathRefs(row.local_path, id, -1) === 0) {
+      try { fs.unlinkSync(row.local_path); softDeleteLocalFile(row.user, row.local_path) } catch { /* ignore */ }
+    }
+    removeLocalCache(row)
+    deleted++
+  }
+  return { deleted }
 }

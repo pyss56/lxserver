@@ -3292,6 +3292,7 @@ class App {
                 return (n / 1024 / 1024).toFixed(1) + ' MB'
             }
             const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            this._olbPageIds = list.slice(start, start + pageSize).map(f => f.id)
             const rows = list.slice(start, start + pageSize).map(f => {
                 const d = new Date(f.updated_at || f.created_at || Date.now())
                 const color = badgeColor[f.status] || '#64748b'
@@ -3301,13 +3302,17 @@ class App {
                 const retryBtn = canRetry
                     ? '<button type="button" class="btn-secondary" style="padding:.15rem .6rem;font-size:.72rem;" onclick="app.retryOpenlistBackup(' + f.id + ')">重试</button>'
                     : '<span style="color:var(--text-secondary);">—</span>'
-                const localMark = f.local_exists ? '<span style="color:#22c55e;">✓</span>' : '<span style="color:#ef4444;">✗</span>'
+                const hasLocal = !!(this._olbLocalExists && this._olbLocalExists[f.id])
+                const localMark = hasLocal ? '<span style="color:#22c55e;">✓</span>' : '<span style="color:#ef4444;">✗</span>'
                 const pathStr = f.local_path || f.remote_path || ''
                 const errStr = f.error || ''
                 const errCell = errStr
                     ? '<span style="color:#ef4444;font-size:.75rem;" title="' + esc(errStr) + '">' + esc(errStr.length > 60 ? errStr.slice(0, 60) + '…' : errStr) + '</span>'
                     : '<span style="color:var(--text-secondary);">—</span>'
+                const sel = this._olbSelected || (this._olbSelected = new Set())
+                const checked = sel.has(f.id) ? 'checked' : ''
                 return '<tr style="border-bottom:1px solid var(--border);">' +
+                    '<td style="padding:.4rem .5rem;text-align:center;"><input type="checkbox" class="olb-sel" data-id="' + f.id + '" ' + checked + ' onchange="app.toggleOpenlistSelect(this)"></td>' +
                     '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + typeLabel + '</td>' +
                     '<td style="padding:.4rem .5rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
@@ -3334,10 +3339,12 @@ class App {
             box.innerHTML = '<div style="overflow:auto;max-height:460px;">' +
                 '<table style="width:100%;min-width:max-content;border-collapse:collapse;font-size:.85rem;">' +
                 '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
+                '<th style="padding:.4rem .5rem;text-align:center;width:1%;"><input type="checkbox" id="olb-selall" onchange="app.toggleOpenlistSelectAll(this)"></th>' +
                 '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
                 '<th style="padding:.4rem .5rem;">路径</th><th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">本地</th>' +
                 '<th style="padding:.4rem .5rem;">异常原因</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table></div>' + pager
+            this.updateOlbSelCount()
         } catch (e) {
             console.error(e)
             box.innerHTML = '<div class="config-hint" style="color:var(--danger);">加载失败: ' + (e && e.message || e) + '</div>'
@@ -3357,6 +3364,66 @@ class App {
             console.error(e)
             if (window.showError) window.showError('重试失败: ' + (e && e.message || e))
         }
+    }
+
+    toggleOpenlistSelect(el) {
+        const id = parseInt(el.dataset.id)
+        if (!this._olbSelected) this._olbSelected = new Set()
+        if (el.checked) this._olbSelected.add(id); else this._olbSelected.delete(id)
+        this.updateOlbSelCount()
+    }
+
+    toggleOpenlistSelectAll(el) {
+        if (!this._olbSelected) this._olbSelected = new Set()
+        const ids = this._olbPageIds || []
+        ids.forEach(id => { if (el.checked) this._olbSelected.add(id); else this._olbSelected.delete(id) })
+        document.querySelectorAll('.olb-sel').forEach(cb => {
+            const id = parseInt(cb.dataset.id)
+            cb.checked = this._olbSelected.has(id)
+        })
+        this.updateOlbSelCount()
+    }
+
+    updateOlbSelCount() {
+        const n = this._olbSelected ? this._olbSelected.size : 0
+        const span = document.getElementById('olb-selcount')
+        if (span) span.textContent = n ? ('已选 ' + n + ' 项') : ''
+        const btn = document.getElementById('olb-bulkdel')
+        if (btn) btn.disabled = n === 0
+    }
+
+    async deleteSelectedOpenlist() {
+        if (!this._olbSelected || !this._olbSelected.size) return
+        const ids = Array.from(this._olbSelected)
+        if (!confirm('确认删除选中的 ' + ids.length + ' 条备份记录？\n将软删除记录并级联删除绑定的附件记录与文件（缓存音频副本一并删除；音乐库文件仅删记录不删本地）。')) return
+        try {
+            const r = await this.request('/api/openlist/delete', { method: 'POST', body: JSON.stringify({ ids }) })
+            if (r && r.success) {
+                this._olbSelected.clear()
+                if (window.showInfo) window.showInfo('已删除 ' + (r.deleted || 0) + ' 条记录')
+                this.loadOpenlistBackups()
+            } else if (window.showError) {
+                window.showError('删除失败: ' + ((r && r.error) || '未知错误'))
+            }
+        } catch (e) {
+            if (window.showError) window.showError('删除失败: ' + (e && e.message || e))
+        }
+    }
+
+    async fetchLocalExists() {
+        const ids = this._olbPageIds || []
+        if (!ids.length) return
+        try {
+            const r = await this.request('/api/openlist/local-exists', { method: 'POST', body: JSON.stringify({ ids }) })
+            if (r && r.exists) {
+                this._olbLocalExists = r.exists
+                document.querySelectorAll('[data-localmark]').forEach((td) => {
+                    const id = parseInt(td.getAttribute('data-localmark'))
+                    const ok = !!r.exists[id]
+                    td.innerHTML = ok ? '<span style="color:#22c55e;">✓</span>' : '<span style="color:#ef4444;">✗</span>'
+                })
+            }
+        } catch (e) { /* ignore */ }
     }
 
     toggleOpenlistAutoRefresh() {

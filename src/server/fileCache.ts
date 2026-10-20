@@ -12,6 +12,7 @@ import { buildLyrics, parseLyrics } from '../utils/lrcTool'
 import { formatPlayTime } from '../utils/common'
 import { getUserSpace } from '../user'
 import { onFileCached as openlistBackupOnFileCached } from './openlistBackup'
+import { softDeleteLocalFileByPath } from './openlistBackupDb'
 
 // --- Cache Naming Patterns ---
 export const CACHE_NAMING_PATTERNS = {
@@ -3031,7 +3032,9 @@ export const clearAllCache = (username?: string) => {
         for (const file of files) {
             try {
                 const stats = fs.statSync(path.join(dir, file))
-                fs.unlinkSync(path.join(dir, file))
+                const fp = path.join(dir, file)
+                fs.unlinkSync(fp)
+                softDeleteLocalFileByPath(fp)
                 deletedCount++; freedSize += stats.size
             } catch (e) { }
         }

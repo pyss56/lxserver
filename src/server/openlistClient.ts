@@ -24,6 +24,7 @@ export interface OpenListFileInfo {
   rawUrl?: string
   openlistUrl?: string
   name?: string
+  modified?: string
 }
 
 const encodePath = (p: string) => p.split('/').map((s) => encodeURIComponent(s)).join('/')
@@ -174,6 +175,7 @@ export class OpenListClient {
       rawUrl: d.raw_url || undefined,
       openlistUrl: `${this.endpoint}/d/${encodePath(remotePath.replace(/^\/+/, ''))}`,
       name: d.name,
+      modified: d.modified || undefined,
     }
   }
 
