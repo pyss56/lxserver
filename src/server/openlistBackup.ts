@@ -509,7 +509,8 @@ export async function verifyPending(): Promise<void> {
         if (mode === 'download' || mode === 'sync') {
           if (row.local_path) await downloadOne(row, cl, mode)
         } else {
-          if (row.local_path && fs.existsSync(row.local_path)) enqueueUpload(row, cl, mode)
+          // 不再以「本地文件存在」为门禁：本地缺失时 uploadOne 会尝试按源重拉（缓存被清理/容器重建丢失的自愈）
+          enqueueUpload(row, cl, mode)
         }
       } catch { /* ignore */ }
     }
