@@ -3300,12 +3300,14 @@ class App {
                 const retryBtn = canRetry
                     ? '<button type="button" class="btn-secondary" style="padding:.15rem .6rem;font-size:.72rem;" onclick="app.retryOpenlistBackup(' + f.id + ')">重试</button>'
                     : '<span style="color:var(--text-secondary);">—</span>'
+                const localMark = f.local_exists ? '<span style="color:#22c55e;">✓</span>' : '<span style="color:#ef4444;">✗</span>'
                 return '<tr style="border-bottom:1px solid var(--border);">' +
                     '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
                     '<td style="padding:.4rem .5rem;">' + typeLabel + '</td>' +
                     '<td style="padding:.4rem .5rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
                     '<td style="padding:.4rem .5rem;"><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:.72rem;">' + label + '</span></td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + fmtSize(f.size) + '</td>' +
+                    '<td style="padding:.4rem .5rem;text-align:center;">' + localMark + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + d.toLocaleString() + '</td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + retryBtn + '</td>' +
                     '</tr>'
@@ -3325,7 +3327,7 @@ class App {
                 '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">' +
                 '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
                 '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
-                '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
+                '<th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">本地</th><th style="padding:.4rem .5rem;">更新时间</th><th style="padding:.4rem .5rem;">操作</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table></div>' + pager
         } catch (e) {
             console.error(e)
@@ -3340,7 +3342,7 @@ class App {
                 if (window.showInfo) window.showInfo('已提交重试')
                 this.loadOpenlistBackups(true)
             } else if (window.showError) {
-                window.showError('重试失败: ' + ((r && r.error) || '未知错误'))
+                window.showError('重试失败: ' + ((r && (r.message || r.error)) || '未知错误'))
             }
         } catch (e) {
             console.error(e)

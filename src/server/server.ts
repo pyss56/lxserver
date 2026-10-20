@@ -7886,9 +7886,9 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               res.end(JSON.stringify({ success: false, error: '缺少 id' }))
               return
             }
-            const ok = await retryBackup(id)
+            const rb = await retryBackup(id)
             res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ success: ok }))
+            res.end(JSON.stringify({ success: rb.ok, message: rb.message || '' }))
           } catch (e: any) {
             res.writeHead(500, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ success: false, error: e?.message || String(e) }))

@@ -724,32 +724,58 @@ export async function runSyncNow(opts: { user?: string; folder?: 'cache' | 'musi
 export function listBackups(): any[] {
   ensureBackupTables()
   const files = listAllBackups()
-  return files.map((f) => ({ ...f, attachments: listAttachments(f.id) }))
+  return files.map((f) => ({ ...f, local_exists: f.local_path ? fs.existsSync(f.local_path) : false, attachments: listAttachments(f.id) }))
 }
 
 /**
- * 单文件手动重试：将指定备份记录重置为 pending 并立即重新上传/下载。
- * 用于前端「重试」按钮或从 API 调用。返回是否成功找到并重投。
+ * 单文件手动重试：先验证记录的真实状态（本地/远端是否存在），再基于状态决定动作——
+ * 已完成的（本地已存在 / 远端已存在）直接修正状态，无需重复传输；否则重新上传/下载。
+ * 返回 { ok, message }，前端据此给出明确提示（不再笼统报“未知错误”）。
  */
-export async function retryBackup(id: number): Promise<boolean> {
+export async function retryBackup(id: number): Promise<{ ok: boolean; message?: string }> {
   const cfg = getConfig()
-  if (!cfg.enable) return false
+  if (!cfg.enable) return { ok: false, message: 'OpenList 备份未启用' }
   const cl = getClient()
-  if (!cl) return false
+  if (!cl) return { ok: false, message: '无法连接 OpenList（未配置或登录失败）' }
   const row = getBackupById(id)
-  if (!row) return false
+  if (!row) return { ok: false, message: '备份记录不存在' }
   const mode = effectiveModeFromRow(row, cfg)
-  setBackupStatus(id, 'pending', { error: null, retryCount: 0 })
   try {
     if (mode === 'download' || mode === 'sync') {
-      if (!row.local_path) return false
+      // 下载/同步：本地文件已存在 → 实际已完成，直接标完成（并补登缓存）
+      if (row.local_path && fs.existsSync(row.local_path)) {
+        const isAud = isAudio(row.local_path)
+        if (isAud) {
+          try { registerDownloadedCache(row.user, row.folder_type as 'cache' | 'music', row.local_path) } catch { /* 已登记则忽略 */ }
+        }
+        setBackupStatus(id, isAud ? 'verified' : 'completed', { remotePath: row.remote_path })
+        return { ok: true, message: '本地文件已存在，已标记为完成' }
+      }
+      if (!row.local_path) return { ok: false, message: '缺少本地路径，无法下载' }
+      // 校验远端是否存在
+      let remoteInfo: any = null
+      try { remoteInfo = await cl.getFileInfo(row.remote_path) } catch { remoteInfo = null }
+      if (!(remoteInfo && remoteInfo.size != null)) return { ok: false, message: '远端文件不存在，无法下载' }
       await downloadOne(row, cl, mode)
+      return { ok: true, message: '已重新下载' }
     } else {
-      if (!row.local_path || !fs.existsSync(row.local_path)) return false
+      // 上传/上传即删：先校验本地源文件
+      if (!row.local_path) return { ok: false, message: '缺少本地路径，无法上传' }
+      if (!fs.existsSync(row.local_path)) return { ok: false, message: '本地源文件不存在，无法重传' }
+      // 校验远端是否已存在（中间态可能实际已上传成功）
+      let remoteInfo: any = null
+      try { remoteInfo = await cl.getFileInfo(row.remote_path) } catch { remoteInfo = null }
+      if (remoteInfo && remoteInfo.size != null) {
+        setBackupStatus(id, 'verified', { size: remoteInfo.size, remotePath: row.remote_path })
+        if (mode === 'upload-delete') {
+          try { fs.unlinkSync(row.local_path); removeLocalCache(row) } catch { /* 忽略 */ }
+        }
+        return { ok: true, message: '远端文件已存在，已标记为完成' }
+      }
       await uploadOne(row, cl, mode)
+      return { ok: true, message: '已重新上传' }
     }
-  } catch {
-    return false
+  } catch (e: any) {
+    return { ok: false, message: '重试异常：' + String(e?.message || e) }
   }
-  return true
 }
