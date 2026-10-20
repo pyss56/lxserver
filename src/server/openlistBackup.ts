@@ -15,6 +15,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { OpenListClient } from './openlistClient'
 import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir } from './fileCache'
+import { callUserApiGetMusicUrl } from './userApi'
 import {
   ensureBackupTables,
   upsertBackupFile,
@@ -236,7 +237,43 @@ function registerDownloadedCache(user: string, folderType: 'cache' | 'music', lo
 
 // ---------- 上传（含附件）----------
 
+/**
+ * 本地源文件缺失时，按记录中保存的 source/songmid/quality 从音源重新拉取音频到 local_path。
+ * 缓存目录为容器临时层（重启/重建会清空），文件可能在上传前被清理；此函数使上传具备自愈能力。
+ * 无法重拉（缺元信息或音源不可达）时返回 false。
+ */
+async function refetchLocalFile(row: any): Promise<boolean> {
+  if (!row.local_path || !row.source || !row.songmid) return false
+  try {
+    const base = row.name
+      ? String(row.name).replace(/\.[^.]+$/, '')
+      : path.basename(row.local_path, path.extname(row.local_path))
+    const songInfo: any = { source: row.source, songmid: row.songmid, name: base, songname: base, singer: '' }
+    const r = await callUserApiGetMusicUrl(row.source, songInfo, row.quality || 'flac', row.user)
+    if (!r || !r.url) return false
+    fs.mkdirSync(path.dirname(row.local_path), { recursive: true })
+    const resp = await fetch(r.url)
+    if (!resp.ok) return false
+    const buf = Buffer.from(await resp.arrayBuffer())
+    fs.writeFileSync(row.local_path, buf)
+    return fs.existsSync(row.local_path)
+  } catch {
+    return false
+  }
+}
+
 async function uploadOne(row: any, cl: OpenListClient, mode: SyncMode, retries = UPLOAD_RETRY_TIMES): Promise<void> {
+  // 本地源文件缺失时尝试按源重新拉取（缓存被清理 / 容器重建导致丢失 -> ENOENT 自愈）
+  if (!row.local_path || !fs.existsSync(row.local_path)) {
+    const ok = await refetchLocalFile(row)
+    if (!ok) {
+      setBackupStatus(row.id, 'failed', {
+        error: '本地源文件已不存在且无法从音源重新下载（缓存已被清理），请重新播放该歌曲后再试',
+        retryCount: (row.retry_count || 0) + 1,
+      })
+      return
+    }
+  }
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       setBackupStatus(row.id, 'uploading')
@@ -761,7 +798,10 @@ export async function retryBackup(id: number): Promise<{ ok: boolean; message?: 
     } else {
       // 上传/上传即删：先校验本地源文件
       if (!row.local_path) return { ok: false, message: '缺少本地路径，无法上传' }
-      if (!fs.existsSync(row.local_path)) return { ok: false, message: '本地源文件不存在，无法重传' }
+      if (!fs.existsSync(row.local_path)) {
+        const ok = await refetchLocalFile(row)
+        if (!ok) return { ok: false, message: '本地源文件已不存在且无法从音源重新下载（缓存已被清理），请重新播放该歌曲后再试' }
+      }
       // 校验远端是否已存在（中间态可能实际已上传成功）
       let remoteInfo: any = null
       try { remoteInfo = await cl.getFileInfo(row.remote_path) } catch { remoteInfo = null }

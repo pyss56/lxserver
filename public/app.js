@@ -3309,10 +3309,10 @@ class App {
                     : '<span style="color:var(--text-secondary);">—</span>'
                 return '<tr style="border-bottom:1px solid var(--border);">' +
                     '<td style="padding:.4rem .5rem;">' + (f.user || '') + '</td>' +
-                    '<td style="padding:.4rem .5rem;">' + typeLabel + '</td>' +
+                    '<td style="padding:.4rem .5rem;white-space:nowrap;">' + typeLabel + '</td>' +
                     '<td style="padding:.4rem .5rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fmtName(f) + '">' + fmtName(f) + '</td>' +
                     '<td style="padding:.4rem .5rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);font-size:.78rem;" title="' + esc(pathStr) + '">' + esc(pathStr) + '</td>' +
-                    '<td style="padding:.4rem .5rem;"><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:.72rem;">' + label + '</span></td>' +
+                    '<td style="padding:.4rem .5rem;white-space:nowrap;"><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:.72rem;">' + label + '</span></td>' +
                     '<td style="padding:.4rem .5rem;white-space:nowrap;">' + fmtSize(f.size) + '</td>' +
                     '<td style="padding:.4rem .5rem;text-align:center;">' + localMark + '</td>' +
                     '<td style="padding:.4rem .5rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + errCell + '</td>' +
@@ -3332,7 +3332,7 @@ class App {
                 '<option value="200"' + (pageSize === 200 ? ' selected' : '') + '>200/页</option>' +
                 '</select></div>'
             box.innerHTML = '<div style="overflow:auto;max-height:460px;">' +
-                '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">' +
+                '<table style="width:100%;min-width:max-content;border-collapse:collapse;font-size:.85rem;">' +
                 '<thead><tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
                 '<th style="padding:.4rem .5rem;">用户</th><th style="padding:.4rem .5rem;">类型</th><th style="padding:.4rem .5rem;">文件</th>' +
                 '<th style="padding:.4rem .5rem;">路径</th><th style="padding:.4rem .5rem;">状态</th><th style="padding:.4rem .5rem;">大小</th><th style="padding:.4rem .5rem;">本地</th>' +
