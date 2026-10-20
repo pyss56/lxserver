@@ -64,7 +64,6 @@ const config: LX.Config = {
   'openlist.keepLocalAfterUpload': true, // 上传完成后保留本地文件
   'openlist.verifyInterval': 5, // 验证轮询间隔（分钟）
   'openlist.includeNonAudio': false, // 是否一并备份下载/缓存目录中的图片等非音频文件
-  'openlist.port': 9528, // OpenList 独立端口（lxserver 侧暴露的 OpenList 相关独立服务端口；开启时默认 9528，可修改）
   'openlist.userBackups': '[]', // JSON 数组：[{user,enabled,backupDownload,backupCache,mode?}]（目录路径由后端自动拼接，无需填写）
 
   // 本地配置备份（config.js 每日一份本地副本）
@@ -98,7 +97,7 @@ const config: LX.Config = {
   'player.path': '/', // 播放器路径，默认为根路径 /
   'subsonic.enable': true, // 是否启用 Subsonic 服务
   'subsonic.path': '/rest', // Subsonic 访问路径
-  'subsonic.port': 0, // Subsonic 独立端口: 0=不启用(走主端口 subsonic.path); >0 时单独监听该端口, 只允许通过 Subsonic 鉴权的用户访问
+  'subsonic.port': 9528, // Subsonic 独立端口: 默认 9528（开启独立端口）；0=不启用(走主端口 subsonic.path); >0 时单独监听该端口, 只允许通过 Subsonic 鉴权的用户访问
   'subsonic.enableDebug': false, // 是否开启 Subsonic 调试日志模式
   'subsonic.onlineSearch': true, // 是否开启 Subsonic 在线全网搜索
   'subsonic.onlineSearchMode': 'fallback', // 在线搜索模式: fallback | merge | local_only

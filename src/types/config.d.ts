@@ -283,11 +283,6 @@ declare namespace LX {
     'openlist.root'?: string
 
     /**
-     * OpenList 独立端口（lxserver 侧暴露的 OpenList 相关独立服务端口），默认 9528，允许修改
-     */
-    'openlist.port'?: number
-
-    /**
      * 上传完成后是否保留本地文件，默认 true（保留）
      */
     'openlist.keepLocalAfterUpload'?: boolean
@@ -409,7 +404,7 @@ declare namespace LX {
     'subsonic.path'?: string
 
     /**
-     * Subsonic 独立监听端口 (默认 0)
+     * Subsonic 独立监听端口 (默认 9528)
      * 0 = 不启用独立端口, Subsonic 仍走主端口的 subsonic.path;
      * >0 = 单独监听该端口, 仅暴露 Subsonic API 且只允许通过 Subsonic 鉴权(verifyAuth)的用户访问。
      */
