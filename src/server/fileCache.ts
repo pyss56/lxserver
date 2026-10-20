@@ -12,7 +12,7 @@ import { buildLyrics, parseLyrics } from '../utils/lrcTool'
 import { formatPlayTime } from '../utils/common'
 import { getUserSpace } from '../user'
 import { onFileCached as openlistBackupOnFileCached } from './openlistBackup'
-import { softDeleteLocalFileByPath } from './openlistBackupDb'
+import { softDeleteLocalFileByPath, getActiveBackupLocalPaths } from './openlistBackupDb'
 
 // --- Cache Naming Patterns ---
 export const CACHE_NAMING_PATTERNS = {
@@ -3199,11 +3199,18 @@ export const checkAndCleanupCache = async (username?: string) => {
         }
     }
     allFiles.sort((a, b) => a.mtime - b.mtime)
+    // 跳过「仍有活跃备份记录」的文件，避免本地缓存被清理后 OpenList 上传因源文件不存在而失败
+    let activeBackupPaths: Set<string> | null = null
+    try { activeBackupPaths = getActiveBackupLocalPaths() } catch { activeBackupPaths = null }
     let currentSize = totalSize
     const targetSize = limitBytes * 0.95
     let deletedCount = 0
     for (const file of allFiles) {
         if (currentSize <= targetSize) break
+        if (activeBackupPaths && activeBackupPaths.has(file.path)) {
+            if (global.lx?.config?.['debug.enabled']) console.log(`[文件缓存] 跳过清理（仍有活跃备份记录）: ${file.path}`)
+            continue
+        }
         try { fs.unlinkSync(file.path); currentSize -= file.size; deletedCount++ } catch (e) { }
     }
     console.log(`[文件缓存] 用户 ${normalizedUsername} 缓存空间清理完成，已删除 ${deletedCount} 个过期文件`)

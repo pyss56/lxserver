@@ -3237,6 +3237,27 @@ class App {
         try {
             const r = await this.request('/api/openlist/backups')
             let list = (r && r.list) || []
+            // 状态指标卡：基于全量列表统计各状态数量（deleted 不计入 list，通常为 0）
+            const STATUS_LABEL = { pending: '待上传', uploading: '进行中', completed: '已完成', verified: '已验证', failed: '失败', deleted: '已删除' }
+            const STATUS_COLOR = { pending: '#64748b', uploading: '#3b82f6', completed: '#0ea5e9', verified: '#22c55e', failed: '#ef4444', deleted: '#94a3b8' }
+            const statusOrder = ['pending', 'uploading', 'completed', 'verified', 'failed', 'deleted']
+            const statusCounts = {}
+            for (const s of statusOrder) statusCounts[s] = 0
+            for (const f of list) { if (f && f.status && statusCounts[f.status] !== undefined) statusCounts[f.status]++ }
+            const cardsBox = document.getElementById('openlist-status-cards')
+            if (cardsBox) {
+              const activeStatus = (document.getElementById('olb-filter-status') || {}).value || ''
+              cardsBox.innerHTML = statusOrder.map((st) => {
+                const n = statusCounts[st] || 0
+                const color = STATUS_COLOR[st] || '#64748b'
+                const label = STATUS_LABEL[st] || st
+                const activeStyle = activeStatus === st ? 'box-shadow:0 0 0 2px ' + color + ' inset;' : ''
+                return '<div class="olb-stat-card" data-status="' + st + '" title="点击按状态筛选" style="cursor:pointer;min-width:92px;padding:.5rem .7rem;border-radius:10px;background:var(--surface,#1e293b);border:1px solid var(--border,#334155);' + activeStyle + '" onclick="app.filterOpenlistByStatus(\'' + st + '\')">' +
+                  '<div style="font-size:1.35rem;font-weight:700;color:' + color + ';line-height:1.1;">' + n + '</div>' +
+                  '<div style="font-size:.75rem;color:var(--text-secondary,#94a3b8);margin-top:.15rem;">' + label + '</div>' +
+                  '</div>'
+              }).join('')
+            }
             // 填充「用户」筛选（仅在首次/选项不足时）
             const userSel = document.getElementById('olb-filter-user')
             if (userSel && userSel.options.length <= 1) {
@@ -3463,6 +3484,15 @@ class App {
     }
 
     applyOpenlistFilter() {
+        this._olbPage = 1
+        this.loadOpenlistBackups()
+    }
+
+    filterOpenlistByStatus(status) {
+        const el = document.getElementById('olb-filter-status')
+        if (!el) return
+        // 再次点击当前已选状态则取消筛选
+        el.value = (el.value === status) ? '' : status
         this._olbPage = 1
         this.loadOpenlistBackups()
     }

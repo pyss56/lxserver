@@ -172,6 +172,25 @@ export function closeBackupDb(): void {
   }
 }
 
+const ACTIVE_UPLOAD_STATUSES: BackupStatus[] = ['pending', 'uploading', 'failed']
+
+/**
+ * 返回当前仍有「活跃上传任务」的本地文件路径集合（未软删，且状态为 pending/uploading/failed）。
+ * 供 fileCache 缓存清理使用：清理体积超限的缓存时跳过这些文件，
+ * 避免本地缓存被清理后 OpenList 上传因「源文件不存在」而失败（error: 本地源文件已不存在...）。
+ * completed/verified 不在此列：它们由上传流程在成功后自行清理本地（upload-delete 模式）。
+ */
+export function getActiveBackupLocalPaths(): Set<string> {
+  const db = getBackupDb()
+  const placeholders = ACTIVE_UPLOAD_STATUSES.map(() => '?').join(',')
+  const rows = db.prepare(
+    `SELECT local_path FROM openlist_backup_files WHERE deleted_at IS NULL AND status IN (${placeholders})`,
+  ).all(...ACTIVE_UPLOAD_STATUSES) as Array<{ local_path: string }>
+  const set = new Set<string>()
+  for (const r of rows) if (r.local_path) set.add(r.local_path)
+  return set
+}
+
 export function upsertBackupFile(input: UpsertBackupInput): BackupFileRow {
   const db = getBackupDb()
   const now = Date.now()
