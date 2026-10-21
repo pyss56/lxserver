@@ -407,12 +407,13 @@ declare namespace LX {
      * 是否启用 Subsonic 独立监听端口 (默认 true)
      * 关闭后 Subsonic 仅走主端口的 subsonic.path；subsonic.port 值会保留，重新开启无需重填。
      * 旧配置缺失此键时按 subsonic.port > 0 兼容推断。
+     * 注意：关闭该开关后需重启服务，已在监听的端口才会停止。
      */
     'subsonic.standalone'?: boolean
 
     /**
      * Subsonic 独立监听端口 (默认 4050)
-     * 仅当 subsonic.standalone 开启且 >0 时单独监听该端口, 仅暴露 Subsonic API 且只允许通过 Subsonic 鉴权(verifyAuth)的用户访问。
+     * 仅当 subsonic.standalone 开启且端口为有效值(>0)时才会单独监听该端口，仅暴露 Subsonic API 且只允许通过 Subsonic 鉴权(verifyAuth)的用户访问。
      */
     'subsonic.port'?: number
 

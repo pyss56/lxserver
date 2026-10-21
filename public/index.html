@@ -1474,7 +1474,7 @@
                                 </div>
                                 <div class="config-toggle-row">
                                     <div class="config-toggle-info">
-                                        <span class="config-toggle-label">启用 Subsonic 独立监听端口 <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="与主端口同时生效。主端口用于网页端与管理后台，此端口仅暴露纯净 Subsonic API（严格鉴权且非 API 请求返回空 404），适合反代、公网穿透或防火墙单独放行">?</span></span>
+                                        <span class="config-toggle-label">启用 Subsonic 独立监听端口 <span class="help-icon" role="button" tabindex="0" onclick="app.toggleHelp(this)" data-help="与主端口同时生效。主端口用于网页端与管理后台，此端口仅暴露纯净 Subsonic API（严格鉴权且非 API 请求返回空 404），适合反代、公网穿透或防火墙单独放行。注意：关闭后需重启服务，已在监听的端口才会停止。">?</span></span>
                                     </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" id="subsonic-standalone-toggle" />
