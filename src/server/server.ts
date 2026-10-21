@@ -7246,6 +7246,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'player.path': global.lx.config['player.path'] ?? '/',
             'subsonic.enable': global.lx.config['subsonic.enable'] ?? true,
             'subsonic.path': global.lx.config['subsonic.path'] ?? '/rest',
+            'subsonic.standalone': global.lx.config['subsonic.standalone'] ?? (global.lx.config['subsonic.port'] ?? 0) > 0,
             'subsonic.port': global.lx.config['subsonic.port'] ?? 0,
             'subsonic.enableDebug': global.lx.config['subsonic.enableDebug'] ?? false,
             'subsonic.onlineSearch': global.lx.config['subsonic.onlineSearch'] ?? true,
@@ -7486,9 +7487,10 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['subsonic.path'] !== undefined) {
                 global.lx.config['subsonic.path'] = newConfig['subsonic.path'].replace(/\/+$/, '') || '/rest'
               }
+              if (newConfig['subsonic.standalone'] !== undefined) global.lx.config['subsonic.standalone'] = !!newConfig['subsonic.standalone']
               if (newConfig['subsonic.port'] !== undefined) {
                 const port = parseInt(newConfig['subsonic.port'], 10)
-                global.lx.config['subsonic.port'] = !isNaN(port) && port >= 0 ? port : 0
+                global.lx.config['subsonic.port'] = !isNaN(port) && port >= 0 && port <= 65535 ? port : 0
               }
               if (newConfig['subsonic.enableDebug'] !== undefined) global.lx.config['subsonic.enableDebug'] = newConfig['subsonic.enableDebug']
               // [本地配置备份] configBackup 配置
@@ -7613,6 +7615,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
                 'player.path': global.lx.config['player.path'] ?? '/',
                 'subsonic.enable': global.lx.config['subsonic.enable'],
                 'subsonic.path': global.lx.config['subsonic.path'],
+                'subsonic.standalone': global.lx.config['subsonic.standalone'] ?? (global.lx.config['subsonic.port'] ?? 0) > 0,
                 'subsonic.port': global.lx.config['subsonic.port'] ?? 0,
                 'subsonic.enableDebug': global.lx.config['subsonic.enableDebug'],
                 'subsonic.onlineSearch': global.lx.config['subsonic.onlineSearch'],
@@ -9027,7 +9030,9 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
 const startSubsonicStandaloneServer = () => {
   const subEnabled = global.lx.config['subsonic.enable'] !== false
   const subPort = global.lx.config['subsonic.port']
-  if (!subEnabled || !(typeof subPort === 'number' && subPort > 0)) return
+  // subsonic.standalone 为独立开关；旧配置缺失此键时按 port>0 兼容推断
+  const subStandalone = global.lx.config['subsonic.standalone'] ?? (typeof subPort === 'number' && subPort > 0)
+  if (!subEnabled || !subStandalone || !(typeof subPort === 'number' && subPort > 0)) return
 
   // 不绑定特定 IP：监听所有网卡，访问控制交由防火墙处理
   const subBindIP = '0.0.0.0'

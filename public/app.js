@@ -3712,7 +3712,10 @@ class App {
             const standaloneFields = document.getElementById('subsonic-standalone-fields');
             const portErrEl = document.getElementById('subsonic-port-error');
             if (standaloneToggle && standaloneFields) {
-                const enabled = (parseInt(config['subsonic.port']) || 0) > 0;
+                // subsonic.standalone 为独立开关；旧配置无此键时按 port>0 兼容推断
+                const enabled = config['subsonic.standalone'] !== undefined
+                    ? !!config['subsonic.standalone']
+                    : (parseInt(config['subsonic.port']) || 0) > 0;
                 standaloneToggle.checked = enabled;
                 standaloneFields.classList.toggle('hidden', !enabled);
                 standaloneToggle.onchange = () => {
@@ -3721,9 +3724,8 @@ class App {
                     const portInput = form.elements['subsonic.port'];
                     if (on && (!portInput.value || parseInt(portInput.value) === 0)) {
                         portInput.value = 9528;
-                    } else if (!on) {
-                        portInput.value = 0;
                     }
+                    // 关闭开关不再清零端口：端口值保留，重新开启无需重填
                     if (portErrEl && !on) {
                         portErrEl.style.display = 'none';
                     }
@@ -3842,6 +3844,8 @@ class App {
         const formData = new FormData(form);
         const config = {
             'subsonic.enable': formData.get('subsonic.enable') === 'on',
+            'subsonic.standalone': document.getElementById('subsonic-standalone-toggle')?.checked
+                ?? (parseInt(formData.get('subsonic.port')) || 0) > 0,
             'subsonic.path': (formData.get('subsonic.path') || '').trim() || '/rest',
             'subsonic.enableDebug': formData.get('subsonic.enableDebug') === 'on',
             'subsonic.port': parseInt(formData.get('subsonic.port')) || 0,
@@ -3872,7 +3876,7 @@ class App {
             'subsonic.source.autoSwitchCustom': formData.get('subsonic.source.autoSwitchCustom') === 'on',
             'singer.sourcePriority': formData.get('singer.sourcePriority'),
         };
-        const restartRequiredKeys = ['subsonic.enable', 'subsonic.port'];
+        const restartRequiredKeys = ['subsonic.enable', 'subsonic.standalone', 'subsonic.port'];
         const prevConfig = this.loadedConfig || {};
         const changedRestartKeys = restartRequiredKeys.filter(k => {
             if (k === 'subsonic.port') return Number(config[k]) !== Number(prevConfig[k]);
