@@ -411,7 +411,7 @@ declare namespace LX {
     'subsonic.standalone'?: boolean
 
     /**
-     * Subsonic 独立监听端口 (默认 9528)
+     * Subsonic 独立监听端口 (默认 4050)
      * 仅当 subsonic.standalone 开启且 >0 时单独监听该端口, 仅暴露 Subsonic API 且只允许通过 Subsonic 鉴权(verifyAuth)的用户访问。
      */
     'subsonic.port'?: number

@@ -3723,7 +3723,7 @@ class App {
                     standaloneFields.classList.toggle('hidden', !on);
                     const portInput = form.elements['subsonic.port'];
                     if (on && (!portInput.value || parseInt(portInput.value) === 0)) {
-                        portInput.value = 9528;
+                        portInput.value = 4050;
                     }
                     // 关闭开关不再清零端口：端口值保留，重新开启无需重填
                     if (portErrEl && !on) {
