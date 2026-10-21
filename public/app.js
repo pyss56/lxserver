@@ -3712,10 +3712,10 @@ class App {
             const standaloneFields = document.getElementById('subsonic-standalone-fields');
             const portErrEl = document.getElementById('subsonic-port-error');
             if (standaloneToggle && standaloneFields) {
-                // subsonic.standalone 为独立开关；旧配置无此键时按默认值(开启)处理
+                // subsonic.standalone 为独立开关；旧配置无此键时按默认值(关闭)处理
                 const enabled = config['subsonic.standalone'] !== undefined
                     ? !!config['subsonic.standalone']
-                    : true;
+                    : false;
                 standaloneToggle.checked = enabled;
                 standaloneFields.classList.toggle('hidden', !enabled);
                 standaloneToggle.onchange = () => {
@@ -3845,7 +3845,7 @@ class App {
         const config = {
             'subsonic.enable': formData.get('subsonic.enable') === 'on',
             'subsonic.standalone': document.getElementById('subsonic-standalone-toggle')?.checked
-                ?? true,
+                ?? false,
             'subsonic.path': (formData.get('subsonic.path') || '').trim() || '/rest',
             'subsonic.enableDebug': formData.get('subsonic.enableDebug') === 'on',
             'subsonic.port': parseInt(formData.get('subsonic.port')) || 0,
