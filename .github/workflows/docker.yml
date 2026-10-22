@@ -52,6 +52,7 @@ jobs:
           echo "PROJECT_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Generate and Commit Build Hash
+        if: github.event_name != 'push'
         run: |
           node scripts/update-build-hash.js
           git config --global user.name "github-actions[bot]"
