@@ -1162,7 +1162,7 @@ class SubsonicHandler {
 
                 case 'stream':
                 case 'download':
-                    return this.handleStream(req, res, username, params, format)
+                    return this.handleStream(req, res, username, params, format, method)
 
                 case 'getCoverArt':
                     return this.handleGetCoverArt(req, res, username, params, format)
@@ -5261,7 +5261,7 @@ class SubsonicHandler {
      * 按音质优先级 + 平台优选解析音流（仅用于 Subsonic stream）。
      * 不是"失败降级"，而是主动按优先级选择最优可用方案：
      *  - 音质优先级：subsonic.quality.priority（默认 flac > 320k > 128k），受客户端 maxBitrate 上界约束。
-     *    clientCapMode=hard 时仅选 ≤ maxBitrate 的最高优先级音质；soft 时若 ≤ 上限都取不到，再向上突破选更高优先级。
+     *    音质选择始终严格 ≤ maxBitrate（clientCapMode 配置项已彻底移除，不再有任何 soft 突破上限分支）。
      *  - 平台优选：客户端所选源(requested)必优先；若开启跨平台，再按 subsonic.source.priority 顺序优选其它平台。
      *  - 同源多脚本：subsonic.source.autoSwitchCustom 开启时，callUserApiGetMusicUrl 内部循环同平台所有自定义源脚本。
      * 客户端规则(source 选择 / maxBitrate 上界)始终优先于后台默认值；subsonic.quality.enabled=false 时退化为单次解析。
@@ -5269,7 +5269,7 @@ class SubsonicHandler {
     /**
      * 计算某平台在给定客户端 maxBitrate 下的音质尝试顺序(高优先级在前)：
      *  - 优先用该平台的逐源覆盖 subsonic.quality.sources.<src>.priority，否则用全局 subsonic.quality.priority。
-     *  - clientCapMode=hard：仅保留 ≤ maxBitrate 的音质；soft：先 ≤ 上限、再突破上限选更高优先级。
+     *  - 音质选择始终严格 ≤ maxBitrate：仅保留 ≤ maxBitrate 的音质（clientCapMode 配置项已彻底移除）。
      * 该顺序同时供源站回源(resolveStreamUrl)与本地缓存探测(playCacheFirst)复用，保证两者一致。
      */
     private getQualityPriorityOrder(src: string, maxBitrate: number): string[] {
@@ -5281,14 +5281,12 @@ class SubsonicHandler {
         const globalPriority = asList(cfg['subsonic.quality.priority'], ['flac', '320k', '128k'])
         const srcOverride = (cfg['subsonic.quality.sources'] as any)?.[src]
         const pri = asList(srcOverride, globalPriority)
-        const cap = maxBitrate === 0 || maxBitrate >= 320 ? Infinity : maxBitrate
+        const cap = maxBitrate === 0 ? Infinity : maxBitrate
         const KBPS: Record<string, number> = { master: 9999, hires: 9999, flac24bit: 9999, flac: 9999, '320k': 320, '192k': 192, '128k': 128 }
         const withinCap = (q: string) => (KBPS[q] ?? 128) <= cap
         const inCap = pri.filter(withinCap)
-        const overCap = pri.filter(q => !withinCap(q))
-        if (cfg['subsonic.quality.clientCapMode'] === 'soft') return [...inCap, ...overCap]
-        // hard 模式：当 maxBitrate 低于所有已知音质（如 64/96 < 最小 128）时 inCap 为空，
-        // 会让音质循环与缓存探测循环都不执行，最终 stream 抛「所有候选失败」。
+        // 始终严格 ≤ maxBitrate（不再提供 soft 突破上限选项）：当 maxBitrate 低于所有已知音质
+        // （如 64/96 < 最小 128）时 inCap 为空，会让音质循环与缓存探测循环都不执行，最终 stream 抛「所有候选失败」。
         // 此时回退到优先级列表中码率最低的一项，保证至少保留一个候选。
         if (inCap.length === 0 && pri.length > 0) {
             return [pri.reduce((lo, q) => (KBPS[q] ?? 128) < (KBPS[lo] ?? 128) ? q : lo)]
@@ -5591,6 +5589,7 @@ class SubsonicHandler {
         username: string,
         params: URLSearchParams,
         format: string,
+        method: string = 'stream',
     ) {
         const id = params.get('id')
         if (!id) return this.sendError(res, 10, 'Required parameter is missing: id', format)
@@ -5613,8 +5612,10 @@ class SubsonicHandler {
             // 仅在服务端转码链路上生效；直接 302 到音源直链时无法携带偏移（客户端自行 seek）。
             const timeOffsetSec = Math.max(0, Math.floor(Number(params.get('timeOffset') || 0)) || 0)
             let quality = '128k'
-            if (maxBitrate === 0 || maxBitrate >= 320) {
-                quality = 'flac' // 优先请求最高音质，SDK 会自动降级
+            // maxBitrate 是硬上限：允许降低码率、绝不超客户端声明。
+            // 0 = 无上限(请求最高无损 flac)；>=320 仍按"最高 320k 封顶"处理，不再透传无损 flac。
+            if (maxBitrate === 0) {
+                quality = 'flac' // 无上限，请求最高音质
             } else if (maxBitrate > 128) {
                 quality = '320k'
             }
@@ -5731,15 +5732,29 @@ class SubsonicHandler {
                 return this.sendError(res, 0, 'Could not resolve playlist radio track', format)
             }
 
-            // [新增] 本地缓存优先播放：受 subsonic.playCacheFirst 开关控制(默认开启)。
-            // 按音质优先级顺序(受 maxBitrate 上界约束)精确探测缓存，命中即直接回传本地文件，跳过源站回源与优先级优选；
-            // 与 resolveStreamUrl 共用 getQualityPriorityOrder，保证"缓存命中"与"回源优选"的音质语义一致（不串音质）。
+            // 下载(download)请求：在所有返回路径(缓存命中/回源/转码)统一附加附件头，
+            // 确保浏览器按文件下载而非内联播放；音质/格式/回退策略与播放共用同一套逻辑。
+            if (method === 'download') {
+                const dlExt = this.getRequestedAudioFormat(params) || (String(quality).includes('flac') ? 'flac' : 'mp3')
+                const dlName = `${id}.${dlExt}`
+                res.setHeader('Content-Disposition', `attachment; filename="${dlName}"; filename*=UTF-8''${encodeURIComponent(dlName)}`)
+            }
+
+            // 本地缓存优先播放：受 subsonic.playCacheFirst 开关控制(默认开启)。
+            // 按确定性规则探测缓存(精确优先 + cap 内降序, 见 getCacheProbeOrder)，命中即直接回传本地文件；
+            // 播放与下载共用此逻辑，仅在投递层做附件头区分，不针对 download 做特殊降级。
             if (global.lx.config['subsonic.playCacheFirst'] !== false) {
-                const cacheOrder = this.getQualityPriorityOrder(source, maxBitrate)
-                for (const q of cacheOrder) {
+                const probe = this.getCacheProbeOrder(quality, maxBitrate)
+                for (const q of probe.qualities) {
                     const c = checkCache({ source, songmid, id, quality: q, exactQuality: true }, username, false)
                     if (c.exists && c.filename) {
-                        subsonicLog.debug(`[Subsonic] Stream hit local cache for ${id} (${c.quality || q}): ${c.filename} (${c.folder})`)
+                        subsonicLog.debug(`[Subsonic] ${method} hit local cache for ${id} (${c.quality || q}): ${c.filename} (${c.folder})`)
+                        // 命中缓存但客户端音频格式与缓存容器不一致 → 走服务端转码（需 subsonic.transcode.enabled 开启，否则发原始缓存文件）
+                        if (this.shouldTranscodeFormat(params, c.filename) && global.lx.config['subsonic.transcode.enabled']) {
+                            const tcBitrate = maxBitrate === 0 ? 320 : maxBitrate
+                            await this.transcodeStream(req, res, c.filename, tcBitrate, format, timeOffsetSec, this.getRequestedAudioFormat(params))
+                            return
+                        }
                         return serveCacheFile(req, res, c.filename, username)
                     }
                 }
@@ -5817,17 +5832,24 @@ class SubsonicHandler {
             }
 
             const transcodeEnabled = global.lx.config['subsonic.transcode.enabled']
-            const onQualityMiss = global.lx.config['subsonic.transcode.onQualityMiss'] !== false
-            // 仅当客户端设了上限(maxBitrate>0)且音源缺对应低音质时,才走服务端转码兜底(默认关,需手动开启)
-            const wantTranscode = !!transcodeEnabled && onQualityMiss && maxBitrate > 0
+            // 客户端显式要求的音频格式(Subsonic format 参数);空=无格式要求
+            const reqFmt = this.getRequestedAudioFormat(params)
+            // 转码兜底触发条件: 客户端设上限(maxBitrate>0)且解析音质超上限,或客户端有格式要求而源站容器不符;
+            // 统一由 subsonic.transcode.enabled 总开关控制(已合并原 onQualityMiss 冗余开关)。
+            const wantTranscode = !!transcodeEnabled && maxBitrate > 0
 
             let result: { url: string, quality: string, selected?: string } | null = null
             let needTranscode = false
             try {
                 result = await this.resolveStreamUrl(source, songmid, id, musicInfo, quality, maxBitrate, username)
-                // soft 模式可能突破上限返回高音质；若实际音质超出客户端上限且要转码,则转码兜底
+                // 严格硬上限下解析结果不应超 maxBitrate;若仍超(极端边缘)且开启转码,则转码兜底
                 if (wantTranscode && this.isQualityOverCap(result.quality, maxBitrate)) {
                     needTranscode = true
+                }
+                // 格式优先满足：客户端要求 format 而源站容器不符 → 转码(需开启转码)
+                if (reqFmt && transcodeEnabled) {
+                    const srcContainer = this.getSourceContainer(result.url, result.quality)
+                    if (srcContainer !== reqFmt) needTranscode = true
                 }
             } catch (e: any) {
                 // 所有候选失败(hard 模式无低音质 / 音源无此曲):尝试取最高可用音质转码兜底
@@ -5875,10 +5897,31 @@ class SubsonicHandler {
                     } catch { /* URL 解析失败则跳过 */ }
                 }
 
-                // [新增] 播放时触发服务器缓存保存：受 subsonic.cacheOnPlay 开关控制
-                // 后台落盘到该用户缓存目录；已在播放的上一首若未下载完成，在切换新歌曲时自动 abort 中断，避免连切刷歌堆积带宽
-                if (global.lx.config['subsonic.cacheOnPlay'] && username) {
-                    const songKey = `${source}_${songmid}_${result.quality}`
+                // [修复] 播放/下载时触发服务器缓存保存：
+                // - 缓存键统一用「请求音质」(quality) 而非「回源实际音质」(result.quality)。
+                //   回源可能把 320k 降级成 192k；若按 result.quality 落盘，本地探测候选(由全局
+                //   subsonic.quality.priority 与请求音质组成)永远不含该实际音质，后续播放无法命中缓存。
+                //   改用请求音质作缓存键后，它天然落在探测候选内，「下载即缓存」才真正成立。
+                // - 下载(download)无论 cacheOnPlay 是否开启都强制落盘；但与可取消的「播放预缓存」分开管理：
+                //   播放预缓存进 subsonicActiveTasks 单用户可取消槽(切歌自动 abort 上一首)，避免连切刷歌堆积带宽；
+                //   下载缓存进独立任务(不进该槽、不被后续下载 abort)，否则连续下载第二首会中断第一首的落盘。
+                if (method === 'download') {
+                    // 下载即缓存：独立任务，强制落盘；不设 abort 槽位，确保批量连续下载每首都能完整写入
+                    void downloadAndCache(musicInfo, result.url, quality, username, undefined, false, true, true, {
+                        requestedSource: source,
+                        downloadSource: source,
+                        sourceName: source,
+                    }).catch((err: any) => {
+                        if (err?.message !== 'Aborted') {
+                            subsonicLog.error('[Subsonic] download cache failed:', err?.message || err)
+                        }
+                    })
+                } else if (global.lx.config['subsonic.cacheOnPlay'] && username) {
+                    // 播放预缓存：可随切歌取消(避免连切刷歌堆积带宽)
+                    if (global.lx.config['subsonic.enableDebug']) {
+                        subsonicLog.debug(`[Subsonic] cacheOnPlay cache write triggered: user=${username} quality=${quality} (cacheOnPlay=${global.lx.config['subsonic.cacheOnPlay']})`)
+                    }
+                    const songKey = `${source}_${songmid}_${quality}`
                     const previous = this.subsonicActiveTasks.get(username)
                     if (previous && previous.songKey !== songKey) {
                         subsonicLog.debug(`[Subsonic] User ${username} switched track, aborting previous background cache task: ${previous.songKey}`)
@@ -5888,7 +5931,7 @@ class SubsonicHandler {
                     const controller = new AbortController()
                     this.subsonicActiveTasks.set(username, { songKey, controller })
 
-                    void downloadAndCache(musicInfo, result.url, result.quality, username, controller.signal, false, true, true, {
+                    void downloadAndCache(musicInfo, result.url, quality, username, controller.signal, false, true, true, {
                         requestedSource: source,
                         downloadSource: source,
                         sourceName: source,
@@ -5904,9 +5947,10 @@ class SubsonicHandler {
                         }
                     })
                 }
-                // 转码兜底:服务端拉高音质 -> ffmpeg 降码率 -> 流式发给客户端(节省客户端流量)
+                // 转码兜底:音质超限 或 格式不符 时,服务端拉源 -> ffmpeg 转码(降码率/换容器) -> 流式发给客户端
                 if (needTranscode) {
-                    await this.transcodeStream(req, res, result.url, maxBitrate, format, timeOffsetSec)
+                    const tcBitrate = maxBitrate === 0 ? 320 : maxBitrate
+                    await this.transcodeStream(req, res, result.url, tcBitrate, format, timeOffsetSec, reqFmt || undefined)
                     return
                 }
                 safeRedirect(res, result.url)
@@ -5927,6 +5971,63 @@ class SubsonicHandler {
         const KBPS: Record<string, number> = { master: 9999, hires: 9999, flac24bit: 9999, flac: 9999, '320k': 320, '192k': 192, '128k': 128 }
         const b = KBPS[String(quality).toLowerCase()] ?? 128
         return b > maxBitrate
+    }
+
+    /**
+     * 计算缓存探测的音质尝试顺序(仅 Subsonic 播放缓存用,与回源选音质 getQualityPriorityOrder 解耦)。
+     * 确定性规则(不再用 cache.fallback 枚举):
+     *  - cap = maxBitrate===0 ? Infinity : maxBitrate(严格硬上限, 绝不超客户端声明)
+     *  - 候选 = 优先级列表中 KBPS ≤ cap 的音质, 按码率降序(更大码率优先)
+     *  - 客户端请求的精确音质若落在 cap 内, 提到最前(精确优先, 满足则不凑其他码率)
+     */
+    private getCacheProbeOrder(requestedQuality: string, maxBitrate: number): { qualities: string[] } {
+        const cfg = global.lx.config
+        const KBPS: Record<string, number> = { master: 9999, hires: 9999, 'flac24bit': 9999, flac: 9999, '320k': 320, '192k': 192, '128k': 128 }
+        const pri = String(cfg['subsonic.quality.priority'] || 'flac,320k,128k').split(',').map(s => s.trim()).filter(Boolean)
+        const cap = maxBitrate === 0 ? Infinity : maxBitrate
+        const inCap = (q: string) => (KBPS[q] ?? 128) <= cap
+        // 候选: 优先级列表中 ≤ cap 的音质, 按码率降序(更大优先)
+        const ordered = pri.filter(inCap)
+        ordered.sort((a, b) => (KBPS[b] ?? 128) - (KBPS[a] ?? 128))
+        // 精确优先: 请求的精确音质若落在 cap 内, 提到最前(即使不在优先级列表也探测一次)
+        const req = String(requestedQuality).toLowerCase()
+        if ((KBPS[req] ?? 128) <= cap) {
+            const i = ordered.indexOf(req)
+            if (i > 0) ordered.unshift(ordered.splice(i, 1)[0])
+            else if (i === -1) ordered.unshift(req)
+        }
+        return { qualities: ordered }
+    }
+
+    /** 客户端请求的音频格式(Subsonic format 参数);raw/native/空=不转码 */
+    private getRequestedAudioFormat(params: URLSearchParams): string {
+        const f = (params.get('format') || '').toLowerCase()
+        if (!f || f === 'raw' || f === 'native') return ''
+        return f
+    }
+
+    /** 缓存命中但客户端音频格式与缓存容器不一致时为 true,需走服务端转码 */
+    private shouldTranscodeFormat(params: URLSearchParams, filename: string): boolean {
+        const f = this.getRequestedAudioFormat(params)
+        if (!f) return false
+        const ext = (filename.split('.').pop() || '').toLowerCase()
+        const fmtExt: Record<string, string> = { mp3: 'mp3', flac: 'flac', ogg: 'ogg', opus: 'opus', aac: 'aac', m4a: 'm4a', mp4: 'mp4' }
+        const targetExt = fmtExt[f]
+        if (!targetExt) return false
+        return ext !== targetExt
+    }
+
+    /** 推断音源/URL 的容器格式(用于与客户端要求的 format 比对) */
+    private getSourceContainer(url: string, quality: string): string {
+        const pathPart = String(url).split('?')[0].split('#')[0]
+        const ext = (pathPart.split('.').pop() || '').toLowerCase()
+        const fmtExt: Record<string, string> = { mp3: 'mp3', flac: 'flac', ogg: 'ogg', opus: 'opus', aac: 'aac', m4a: 'm4a', mp4: 'mp4' }
+        if (fmtExt[ext]) return fmtExt[ext]
+        // 扩展名无法识别时按音质元数据推断真实容器：atmos/atmos_plus 实为 mp4，flac 系为 flac，其余回退 mp3
+        const q = String(quality).toLowerCase()
+        if (q.includes('flac')) return 'flac'
+        if (q === 'atmos' || q === 'atmos_plus') return 'mp4'
+        return 'mp3'
     }
 
     /**

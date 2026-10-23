@@ -491,10 +491,6 @@ if (envParams.SUBSONIC_QUALITY_ENABLED !== undefined) {
 if (envParams.SUBSONIC_QUALITY_PRIORITY) {
   global.lx.config['subsonic.quality.priority'] = envParams.SUBSONIC_QUALITY_PRIORITY.split(',').map((s: string) => s.trim()).filter(Boolean).join(',')
 }
-if (envParams.SUBSONIC_QUALITY_CLIENT_CAP_MODE) {
-  const mode = envParams.SUBSONIC_QUALITY_CLIENT_CAP_MODE as any
-  if (mode === 'hard' || mode === 'soft') global.lx.config['subsonic.quality.clientCapMode'] = mode
-}
 if (envParams.SUBSONIC_SOURCE_PRIORITY) {
   global.lx.config['subsonic.source.priority'] = envParams.SUBSONIC_SOURCE_PRIORITY.split(',').map((s: string) => s.trim()).filter(Boolean).join(',')
 }

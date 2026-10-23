@@ -7205,6 +7205,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'player.path': global.lx.config['player.path'] ?? '/',
             'subsonic.enable': global.lx.config['subsonic.enable'] ?? true,
             'subsonic.path': global.lx.config['subsonic.path'] ?? '/rest',
+            'subsonic.standalone': global.lx.config['subsonic.standalone'] ?? false,
             'subsonic.port': global.lx.config['subsonic.port'] ?? 0,
             'subsonic.enableDebug': global.lx.config['subsonic.enableDebug'] ?? false,
             'subsonic.onlineSearch': global.lx.config['subsonic.onlineSearch'] ?? true,
@@ -7225,10 +7226,9 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'subsonic.dislikeRequireSinger': global.lx.config['subsonic.dislikeRequireSinger'] ?? true,
             'subsonic.lyricTranslation': global.lx.config['subsonic.lyricTranslation'] ?? true,
             'subsonic.cacheOnPlay': global.lx.config['subsonic.cacheOnPlay'] ?? false,
-            'subsonic.playCacheFirst': global.lx.config['subsonic.playCacheFirst'] ?? true,
+            'subsonic.playCacheFirst': global.lx.config['subsonic.playCacheFirst'] ?? false,
             'subsonic.quality.enabled': global.lx.config['subsonic.quality.enabled'] ?? true,
             'subsonic.quality.priority': global.lx.config['subsonic.quality.priority'] ?? 'flac,320k,128k',
-            'subsonic.quality.clientCapMode': global.lx.config['subsonic.quality.clientCapMode'] ?? 'soft',
             'subsonic.source.priority': global.lx.config['subsonic.source.priority'] ?? 'kw,tx,wy,mg,kg',
             'subsonic.source.crossPlatform': global.lx.config['subsonic.source.crossPlatform'] ?? true,
             'subsonic.source.autoSwitchCustom': global.lx.config['subsonic.source.autoSwitchCustom'] ?? true,
@@ -7413,9 +7413,10 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['subsonic.path'] !== undefined) {
                 global.lx.config['subsonic.path'] = newConfig['subsonic.path'].replace(/\/+$/, '') || '/rest'
               }
+              if (newConfig['subsonic.standalone'] !== undefined) global.lx.config['subsonic.standalone'] = !!newConfig['subsonic.standalone']
               if (newConfig['subsonic.port'] !== undefined) {
                 const port = parseInt(newConfig['subsonic.port'], 10)
-                global.lx.config['subsonic.port'] = !isNaN(port) && port >= 0 ? port : 0
+                global.lx.config['subsonic.port'] = !isNaN(port) && port >= 0 && port <= 65535 ? port : 0
               }
               if (newConfig['subsonic.enableDebug'] !== undefined) global.lx.config['subsonic.enableDebug'] = newConfig['subsonic.enableDebug']
               // [本地配置备份] configBackup 配置
@@ -7458,7 +7459,6 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['subsonic.playCacheFirst'] !== undefined) global.lx.config['subsonic.playCacheFirst'] = newConfig['subsonic.playCacheFirst']
               if (newConfig['subsonic.quality.enabled'] !== undefined) global.lx.config['subsonic.quality.enabled'] = !!newConfig['subsonic.quality.enabled']
               if (newConfig['subsonic.quality.priority'] !== undefined) global.lx.config['subsonic.quality.priority'] = String(newConfig['subsonic.quality.priority'])
-              if (newConfig['subsonic.quality.clientCapMode'] !== undefined && ['hard', 'soft'].includes(newConfig['subsonic.quality.clientCapMode'])) global.lx.config['subsonic.quality.clientCapMode'] = newConfig['subsonic.quality.clientCapMode']
               if (newConfig['subsonic.source.priority'] !== undefined) global.lx.config['subsonic.source.priority'] = String(newConfig['subsonic.source.priority'])
               if (newConfig['subsonic.source.crossPlatform'] !== undefined) global.lx.config['subsonic.source.crossPlatform'] = !!newConfig['subsonic.source.crossPlatform']
               if (newConfig['subsonic.source.autoSwitchCustom'] !== undefined) global.lx.config['subsonic.source.autoSwitchCustom'] = !!newConfig['subsonic.source.autoSwitchCustom']
@@ -7540,6 +7540,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
                 'player.path': global.lx.config['player.path'] ?? '/',
                 'subsonic.enable': global.lx.config['subsonic.enable'],
                 'subsonic.path': global.lx.config['subsonic.path'],
+                'subsonic.standalone': global.lx.config['subsonic.standalone'] ?? false,
                 'subsonic.port': global.lx.config['subsonic.port'] ?? 0,
                 'subsonic.enableDebug': global.lx.config['subsonic.enableDebug'],
                 'subsonic.onlineSearch': global.lx.config['subsonic.onlineSearch'],
@@ -7564,7 +7565,6 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
                 'subsonic.playCacheFirst': global.lx.config['subsonic.playCacheFirst'],
                 'subsonic.quality.enabled': global.lx.config['subsonic.quality.enabled'],
                 'subsonic.quality.priority': global.lx.config['subsonic.quality.priority'],
-                'subsonic.quality.clientCapMode': global.lx.config['subsonic.quality.clientCapMode'],
                 'subsonic.source.priority': global.lx.config['subsonic.source.priority'],
                 'subsonic.source.crossPlatform': global.lx.config['subsonic.source.crossPlatform'],
                 'subsonic.source.autoSwitchCustom': global.lx.config['subsonic.source.autoSwitchCustom'],
@@ -8812,7 +8812,9 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
 const startSubsonicStandaloneServer = () => {
   const subEnabled = global.lx.config['subsonic.enable'] !== false
   const subPort = global.lx.config['subsonic.port']
-  if (!subEnabled || !(typeof subPort === 'number' && subPort > 0)) return
+  // subsonic.standalone 为独立开关；旧配置缺失此键时按默认值(关闭)处理
+  const subStandalone = global.lx.config['subsonic.standalone'] ?? false
+  if (!subEnabled || !subStandalone || !(typeof subPort === 'number' && subPort > 0)) return
 
   // 不绑定特定 IP：监听所有网卡，访问控制交由防火墙处理
   const subBindIP = '0.0.0.0'

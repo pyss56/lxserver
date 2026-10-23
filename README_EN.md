@@ -232,7 +232,7 @@ Go to LX Music client "Settings → Sync Settings" and choose Custom Server:
 Fully compatible with Subsonic API protocol:
 - **Server Address (Server URL)**:
   - **Default Shared Port**: `http://<server-ip>:9527/rest` (Subpath configured via `SUBSONIC_PATH`, default `/rest`).
-  - **Standalone Port Mode** (if `SUBSONIC_PORT` > 0, e.g., `4533`): `http://<server-ip>:4533/rest`.
+  - **Standalone Port Mode** (requires the `subsonic.standalone=true` master switch enabled—via the admin "Subsonic protocol config" page or `config.js`—and a valid port: default `4050`, overridable with the `SUBSONIC_PORT` env var or admin config; e.g. `4533`): `http://<server-ip>:<port>/rest`, e.g. `http://<server-ip>:4533/rest`.
 - **Username & Password**: Sync username and password configured in the "User Management" dashboard.
 - **Global Online Search**: Search and stream tracks across music platforms directly within Subsonic clients. Prefix keywords with `wy:`, `tx:`, `kw:`, `kg:`, `mg:` to specify sources, or `online:` / `local:` to toggle online/local search.
 
@@ -301,7 +301,7 @@ The configuration file is persisted by default in the data directory at `data/co
 | `SINGER_SOURCE_PRIORITY` | `singer.sourcePriority` | Singer info retrieval priority (e.g., `tx,wy` or `wy,tx`) | `tx,wy` |
 | `SUBSONIC_ENABLE` | `subsonic.enable` | Enable Subsonic API support | `true` |
 | `SUBSONIC_PATH` | `subsonic.path` | Subsonic API access path (default `/rest`) | `/rest` |
-| `SUBSONIC_PORT` | `subsonic.port` | Standalone port for Subsonic (`0` means disabled, shares main port) | `0` |
+| `SUBSONIC_PORT` | `subsonic.port` | Standalone port for Subsonic (default `4050`; only listens standalone when `subsonic.standalone=true` and port > 0; `0` disables standalone, shares main port) | `4050` |
 | `SUBSONIC_ENABLE_DEBUG` | `subsonic.enableDebug` | Enable Subsonic debug log mode | `false` |
 | `SUBSONIC_ONLINE_SEARCH` | `subsonic.onlineSearch` | Enable Subsonic online search | `true` |
 | `SUBSONIC_ONLINE_SEARCH_MODE` | `subsonic.onlineSearchMode` | Subsonic online search mode (`fallback` / `merge` / `local_only`) | `fallback` |
@@ -310,7 +310,7 @@ The configuration file is persisted by default in the data directory at `data/co
 | `SUBSONIC_LEADERBOARD_SOURCE` | `subsonic.leaderboardSource` | Subsonic public leaderboard default platform (single platform, e.g., `tx`, `wy`) | `tx` |
 | `SUBSONIC_LYRIC_TRANSLATION` | `subsonic.lyricTranslation` | Include translations in Subsonic lyrics | `true` |
 | `SUBSONIC_CACHE_ON_PLAY` | `subsonic.cacheOnPlay` | Trigger server caching on Subsonic playback (cached to user dir) | `false` |
-| `SUBSONIC_PLAY_CACHE_FIRST` | `subsonic.playCacheFirst` | Prefer streaming local cached/downloaded files on Subsonic playback | `true` |
+| `SUBSONIC_PLAY_CACHE_FIRST` | `subsonic.playCacheFirst` | Prefer streaming local cached/downloaded files on Subsonic playback (default off, to avoid server egress) | `false` |
 | `SUBSONIC_QUALITY_ENABLED` | `subsonic.quality.enabled` | Enable Subsonic audio quality selection | `true` |
 | `SUBSONIC_QUALITY_PRIORITY` | `subsonic.quality.priority` | Subsonic audio quality priority order (e.g. `flac,320k,128k`) | `flac,320k,128k` |
 | `ARTIST_MAX_FETCH_PAGES` | `artist.maxFetchPages` | Maximum fetch pages for artist tracks | `20` |

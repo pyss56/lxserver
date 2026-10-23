@@ -311,9 +311,16 @@ declare namespace LX {
     'subsonic.path'?: string
 
     /**
-     * Subsonic 独立监听端口 (默认 0)
-     * 0 = 不启用独立端口, Subsonic 仍走主端口的 subsonic.path;
-     * >0 = 单独监听该端口, 仅暴露 Subsonic API 且只允许通过 Subsonic 鉴权(verifyAuth)的用户访问。
+     * 是否启用 Subsonic 独立监听端口 (默认 false)
+     * 关闭后 Subsonic 仅走主端口的 subsonic.path；subsonic.port 值会保留，重新开启无需重填。
+     * 旧配置缺失此键时按默认值(关闭)处理。
+     * 注意：关闭该开关后需重启服务，已在监听的端口才会停止。
+     */
+    'subsonic.standalone'?: boolean
+
+    /**
+     * Subsonic 独立监听端口 (默认 4050)
+     * 仅当 subsonic.standalone 开启且端口为有效值(>0)时才会单独监听该端口，仅暴露 Subsonic API 且只允许通过 Subsonic 鉴权(verifyAuth)的用户访问。
      */
     'subsonic.port'?: number
 
@@ -437,8 +444,8 @@ declare namespace LX {
     'subsonic.cacheOnPlay'?: boolean
 
     /**
-     * 是否在 Subsonic 播放音乐时优先使用本地缓存/下载文件直接流式传输 (默认 true)
-     * 开启后,若服务器该用户目录下已存在此歌曲的缓存或下载文件,直接传输本地流,避免向源站请求在线直链
+     * 是否在 Subsonic 播放音乐时优先使用本地缓存/下载文件直接流式传输 (默认 false)
+     * 开启后,若服务器该用户目录下已存在此歌曲的缓存或下载文件,直接传输本地流,避免向源站请求在线直链;默认关闭以免服务器自担出向流量
      */
     'subsonic.playCacheFirst'?: boolean
 
@@ -447,11 +454,6 @@ declare namespace LX {
      * 服务端拉取最高可用音质并经 ffmpeg 降码率后流式发给客户端,节省客户端流量(需服务端安装 ffmpeg)。
      */
     'subsonic.transcode.enabled'?: boolean
-
-    /**
-     * 仅当音源缺失对应低音质时才转码 (默认 true)。关闭则退回 302 直链原行为,永不转码。
-     */
-    'subsonic.transcode.onQualityMiss'?: boolean
 
     /**
      * 转码目标容器格式 (默认 'mp3'),可选 mp3 | opus | aac。
@@ -477,11 +479,6 @@ declare namespace LX {
      * 逐源音质优先级覆盖, 如 'subsonic.quality.sources.kw.priority': ['flac','320k']。存在时优先于全局 priority。
      */
     'subsonic.quality.sources'?: Record<string, string[]>
-
-    /**
-     * 客户端 maxBitrate 上界模式: 'hard' 只选 ≤ 上限的最高优先级音质; 'soft' 上限内都取不到时再突破上限选更高优先级。
-     */
-    'subsonic.quality.clientCapMode'?: 'hard' | 'soft'
 
     /**
      * 跨平台优选顺序(逗号分隔), 默认 'kw,tx,wy,mg,kg'。客户端所选源始终优先, 其余按此顺序优选。

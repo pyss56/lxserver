@@ -232,9 +232,9 @@ module.exports = {
   // 环境变量: SUBSONIC_PATH
   "subsonic.path": "/rest",
 
-  // Subsonic 独立监听端口 (0 为不启用独立端口，共用主服务端口；>0 时单独监听指定端口)
+  // Subsonic 独立监听端口 (默认 4050；需配合 subsonic.standalone=true 才单独监听，否则共用主服务端口)
   // 环境变量: SUBSONIC_PORT
-  "subsonic.port": 0,
+  "subsonic.port": 4050,
 
   // 是否开启 Subsonic 调试日志模式 (默认关闭)
   // 环境变量: SUBSONIC_ENABLE_DEBUG
@@ -270,7 +270,7 @@ module.exports = {
 
   // 是否在 Subsonic 播放音乐时优先使用本地缓存/下载文件直接流式传输 (默认开启)
   // 环境变量: SUBSONIC_PLAY_CACHE_FIRST (true/false)
-  "subsonic.playCacheFirst": true,
+  "subsonic.playCacheFirst": false,
 
   // Subsonic 音质优选总开关 (按优先级主动选最优可用音质，关闭则仅做单次解析)
   // 环境变量: SUBSONIC_QUALITY_ENABLED (true/false)
