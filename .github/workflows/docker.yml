@@ -3,6 +3,8 @@ name: Build and Push Docker Image
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    branches: [dev, main]
 env:
   REGISTRY: ghcr.io
   # 使用 github.repository_owner 获取用户名，并指定镜像名为 lxserver
