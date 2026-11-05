@@ -15,6 +15,8 @@ services:
       # 通过环境变量覆盖配置，优先级高于 config.js
       # 用户：LX_USER_<用户名>=<密码 或 JSON 配置>
       # - LX_USER_myuser=mypassword
+      # 管理员密码：覆盖默认 123456（强烈建议设置为强密码）
+      # - ADMIN_PASSWORD=your-strong-password
       # Subsonic 独立服务
       # - SUBSONIC_STANDALONE=true
       # - SUBSONIC_PORT=4050
