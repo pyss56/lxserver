@@ -257,6 +257,20 @@ test('OpenList backup, restore and synchronization against an HTTP storage serve
     assert.equal(fs.readFileSync(local, 'utf8'), 'original')
   })
 
+  await t.test('backfill upload-delete keeps local files when the remote copy disappeared', async () => {
+    reset(); setRule({ mode: 'upload' })
+    const local = putLocal('music', 'keep.mp3', 'precious')
+    await sync('music')
+    await api.verifyPending()
+    const row = api.listAllBackups().find(r => r.local_path === local)
+    assert.equal(row.status, 'verified')
+    // 远端被手动删除：数据库仍是 verified，但不能仅凭该状态删除本地（music 是用户实际文件）
+    remote.delete(rp('music', 'keep.mp3'))
+    setRule({ mode: 'upload-delete' })
+    await api.triggerBackfillUploadDelete('alice')
+    assert.equal(fs.existsSync(local), true)
+  })
+
   await t.test('selected data types round-trip into a fresh installation without a backup database', async () => {
     reset(); setRule({ backupCache: false })
     config['backup.openlist.types'] = ['music', 'userFiles', 'snapshots', 'userData', 'system']

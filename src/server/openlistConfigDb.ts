@@ -134,73 +134,81 @@ export function loadOpenlistConfig(): OpenlistConfig {
 export function saveOpenlistConfig(patch: Partial<OpenlistConfig>): OpenlistConfig {
   ensureTables()
   const db = getBackupDb()
-  const next: OpenlistConfig = { ...loadOpenlistConfig(), ...patch }
-  const now = Date.now()
-  db.prepare(`INSERT INTO openlist_config
-    (id, enable, endpoint, username, password, token, root, verify_interval, sync_interval, include_non_audio, external_url, backup_system_config, updated_at)
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      enable = excluded.enable,
-      endpoint = excluded.endpoint,
-      username = excluded.username,
-      password = excluded.password,
-      token = excluded.token,
-      root = excluded.root,
-      verify_interval = excluded.verify_interval,
-      sync_interval = excluded.sync_interval,
-      include_non_audio = excluded.include_non_audio,
-      external_url = excluded.external_url,
-      backup_system_config = excluded.backup_system_config,
-      updated_at = excluded.updated_at`
-  ).run(
-    next.enable ? 1 : 0,
-    next.endpoint,
-    next.username,
-    next.password,
-    next.token,
-    next.root,
-    next.verifyInterval,
-    next.syncInterval,
-    next.includeNonAudio ? 1 : 0,
-    next.externalUrl,
-    next.backupSystemConfig ? 1 : 0,
-    now,
-  )
-
-  const keep = new Set<string>()
-  for (const u of next.userBackups) {
-    if (!u.user) continue
-    keep.add(u.user)
-    db.prepare(`INSERT INTO openlist_user_backup
-      (user, enabled, backup_download, backup_cache, backup_snapshot, mode, download_dir, cache_dir, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user) DO UPDATE SET
-        enabled = excluded.enabled,
-        backup_download = excluded.backup_download,
-        backup_cache = excluded.backup_cache,
-        backup_snapshot = excluded.backup_snapshot,
-        mode = excluded.mode,
-        download_dir = excluded.download_dir,
-        cache_dir = excluded.cache_dir,
+  // 主记录与用户规则必须原子写入：否则迁移写完主记录后崩溃，下次启动会判定「已迁移」而永久丢失用户规则
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const next: OpenlistConfig = { ...loadOpenlistConfig(), ...patch }
+    const now = Date.now()
+    db.prepare(`INSERT INTO openlist_config
+      (id, enable, endpoint, username, password, token, root, verify_interval, sync_interval, include_non_audio, external_url, backup_system_config, updated_at)
+      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        enable = excluded.enable,
+        endpoint = excluded.endpoint,
+        username = excluded.username,
+        password = excluded.password,
+        token = excluded.token,
+        root = excluded.root,
+        verify_interval = excluded.verify_interval,
+        sync_interval = excluded.sync_interval,
+        include_non_audio = excluded.include_non_audio,
+        external_url = excluded.external_url,
+        backup_system_config = excluded.backup_system_config,
         updated_at = excluded.updated_at`
     ).run(
-      u.user,
-      u.enabled ? 1 : 0,
-      u.backupDownload !== false ? 1 : 0,
-      u.backupCache !== false ? 1 : 0,
-      u.backupSnapshot !== false ? 1 : 0,
-      u.mode || 'upload',
-      u.downloadDir || null,
-      u.cacheDir || null,
-      now,
+      next.enable ? 1 : 0,
+      next.endpoint,
+      next.username,
+      next.password,
+      next.token,
+      next.root,
+      next.verifyInterval,
+      next.syncInterval,
+      next.includeNonAudio ? 1 : 0,
+      next.externalUrl,
+      next.backupSystemConfig ? 1 : 0,
       now,
     )
+
+    const keep = new Set<string>()
+    for (const u of next.userBackups) {
+      if (!u.user) continue
+      keep.add(u.user)
+      db.prepare(`INSERT INTO openlist_user_backup
+        (user, enabled, backup_download, backup_cache, backup_snapshot, mode, download_dir, cache_dir, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user) DO UPDATE SET
+          enabled = excluded.enabled,
+          backup_download = excluded.backup_download,
+          backup_cache = excluded.backup_cache,
+          backup_snapshot = excluded.backup_snapshot,
+          mode = excluded.mode,
+          download_dir = excluded.download_dir,
+          cache_dir = excluded.cache_dir,
+          updated_at = excluded.updated_at`
+      ).run(
+        u.user,
+        u.enabled ? 1 : 0,
+        u.backupDownload !== false ? 1 : 0,
+        u.backupCache !== false ? 1 : 0,
+        u.backupSnapshot !== false ? 1 : 0,
+        u.mode || 'upload',
+        u.downloadDir || null,
+        u.cacheDir || null,
+        now,
+        now,
+      )
+    }
+    const existing = db.prepare('SELECT user FROM openlist_user_backup').all() as any[]
+    for (const row of existing) {
+      if (!keep.has(row.user)) db.prepare('DELETE FROM openlist_user_backup WHERE user = ?').run(row.user)
+    }
+    db.exec('COMMIT')
+    return next
+  } catch (e) {
+    try { db.exec('ROLLBACK') } catch { /* 事务可能已自动回滚 */ }
+    throw e
   }
-  const existing = db.prepare('SELECT user FROM openlist_user_backup').all() as any[]
-  for (const row of existing) {
-    if (!keep.has(row.user)) db.prepare('DELETE FROM openlist_user_backup WHERE user = ?').run(row.user)
-  }
-  return next
 }
 
 /** 把 config.js / 环境变量中的旧 openlist 配置迁移到数据表；已有记录时不做任何处理 */

@@ -250,6 +250,7 @@ function getAllUserNames(): string[] {
  * 此函数从路径反推真实逻辑用户名，供展示层按用户归位使用。
  */
 let dirNameToUserCache: Record<string, string> | null = null
+let dirNameToUserBuiltAt = 0
 function buildDirNameToUserMap(): Record<string, string> {
   const map: Record<string, string> = {}
   for (const u of getAllUserNames()) {
@@ -258,6 +259,7 @@ function buildDirNameToUserMap(): Record<string, string> {
       if (d) map[d] = u
     } catch { /* ignore */ }
   }
+  dirNameToUserBuiltAt = Date.now()
   return map
 }
 function resolveUsernameFromPath(p?: string | null): string | null {
@@ -266,8 +268,9 @@ function resolveUsernameFromPath(p?: string | null): string | null {
   if (!m) return null
   if (dirNameToUserCache === null) dirNameToUserCache = buildDirNameToUserMap()
   let name = dirNameToUserCache[m[1]]
-  if (!name) {
-    // 新增 / 重命名用户后缓存会过期，未命中时重建一次再查
+  if (!name && Date.now() - dirNameToUserBuiltAt > 10_000) {
+    // 新增 / 重命名用户后缓存会过期；限制重建频率（10s），避免 listBackups 中每行未命中都
+    // 触发一次「遍历全部用户 + MD5」的重建，退化成 O(行数 × 用户数)
     dirNameToUserCache = buildDirNameToUserMap()
     name = dirNameToUserCache[m[1]]
   }
@@ -817,6 +820,8 @@ export async function triggerBackfillUploadDelete(user: string): Promise<void> {
   const folders: Array<'cache' | 'music'> = ['cache', 'music']
   for (const folderType of folders) {
     if (!folderEnabled(user, folderType, cfg)) continue
+    // 统一数据模式下 music 已由 _data 备份覆盖，再跑旧的上传即删会删掉用户实际下载的文件
+    if (folderType === 'music' && (global.lx.config as any)['backup.openlist.types'] !== undefined) continue
     const dir = resolveUserDir(entry, folderType, cfg)
     if (!dir || !fs.existsSync(dir)) continue
     const locals = walkLocal(dir, folderType)
@@ -824,20 +829,32 @@ export async function triggerBackfillUploadDelete(user: string): Promise<void> {
       const existing = getBackupByLocalPath(user, folderType, localPath)
       // 分支1：远端已存在且已确认 → 跳过上传，直接删本地（含已 verified 附件）
       if (existing && !existing.deleted_at && (existing.status === 'verified' || existing.status === 'completed') && !localChanged(existing)) {
+        // 删本地前必须确认远端副本真的还在且大小一致：记录可能来自旧 upload 模式，
+        // 远端也可能被手动删除/替换。music 是用户实际下载的文件，仅凭 DB 状态删除会造成不可恢复的丢失。
+        let remoteOk = false
         try {
-          if (existing.local_path && fs.existsSync(existing.local_path)) {
-            fs.unlinkSync(existing.local_path)
-            removeLocalCache(existing)
-            softDeleteLocalFile(existing.user, existing.local_path)
-          }
-          for (const a of listAttachments(existing.id)) {
-            if (a.status === 'verified' && a.local_path && fs.existsSync(a.local_path) && countLocalPathRefs(a.local_path, existing.id, a.id) === 0) {
-              try { fs.unlinkSync(a.local_path); softDeleteLocalFile(a.user, a.local_path) } catch { /* ignore */ }
+          const remote = await cl.getFileInfo(existing.remote_path)
+          remoteOk = !!remote && (existing.size == null || Number(remote.size) === Number(existing.size))
+        } catch { /* 远端不可达或不存在 → 走分支2 重新上传 */ }
+        if (remoteOk) {
+          try {
+            if (existing.local_path && fs.existsSync(existing.local_path)) {
+              fs.unlinkSync(existing.local_path)
+              removeLocalCache(existing)
+              softDeleteLocalFile(existing.user, existing.local_path)
             }
-          }
-        } catch { /* ignore */ }
-        continue
+            for (const a of listAttachments(existing.id)) {
+              if (a.status === 'verified' && a.local_path && fs.existsSync(a.local_path) && countLocalPathRefs(a.local_path, existing.id, a.id) === 0) {
+                try { fs.unlinkSync(a.local_path); softDeleteLocalFile(a.user, a.local_path) } catch { /* ignore */ }
+              }
+            }
+          } catch { /* ignore */ }
+          continue
+        }
       }
+      // 墓碑记录表示用户已删除该备份，不因模式切换重新登记；已在传输/排队中的记录也不重复入队
+      if (existing?.deleted_at || existing?.status === 'deleted') continue
+      if (existing && (existing.status === 'uploading' || existing.status === 'pending')) continue
       // 分支2：登记为 upload-delete 并上传，verifyPending 后续按大小校验删除本地
       const relative = path.relative(dir, localPath).replace(/\\/g, '/')
       const remotePath = cl.resolveRemotePath(`${user}/${folderType}/${relative}`)
@@ -1214,6 +1231,7 @@ async function backupSystemConfigFile(cl: OpenListClient, _cfg: BackupConfig, su
  *   并按 configBackup.retentionDays 清理过期的历史副本。
  */
 let lastConfigHistoryHash = ''
+let lastHistoryPruneAt = 0
 async function backupSystemConfigHistory(cl: OpenListClient, cfg: BackupConfig, summary: SyncSummary): Promise<void> {
   const lx: any = (globalThis as any).lx
   const configPath: string = lx?.configPath || process.env.CONFIG_PATH || path.join(lx?.dataPath || '.', 'config.js')
@@ -1225,13 +1243,27 @@ async function backupSystemConfigHistory(cl: OpenListClient, cfg: BackupConfig, 
   if (!shouldBackupSystem) return
 
   const fingerprint = crypto.createHash('md5').update(fs.readFileSync(configPath)).digest('hex').slice(0, 8)
-  if (fingerprint === lastConfigHistoryHash) return
+  // 过期清理与是否产生新副本无关：配置长期不变时也要按天执行一次，否则旧副本会一直堆积
+  const pruneDue = Date.now() - lastHistoryPruneAt >= 24 * 60 * 60 * 1000
+  if (fingerprint === lastConfigHistoryHash && !pruneDue) return
 
   const historyDir = cl.resolveRemotePath('_system/config-history')
   await cl.mkdir(historyDir)
   let files: Awaited<ReturnType<OpenListClient['listFilesRecursive']>> = []
   try { files = await cl.listFilesRecursive(historyDir) } catch { /* 空目录/列举失败按空处理 */ }
   const historyNameRe = /^config-\d{4}-\d{2}-\d{2}_\d{6}-[0-9a-f]{8}\.js$/
+  if (pruneDue) {
+    lastHistoryPruneAt = Date.now()
+    const days = Number(lx?.config?.['configBackup.retentionDays'])
+    const cutoff = Date.now() - (Number.isFinite(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000
+    for (const f of files) {
+      if (f.isDir || !historyNameRe.test(f.name)) continue
+      const modified = parseMod(f.modified)
+      if (modified == null || modified >= cutoff) continue
+      try { await cl.remove(f.path) } catch { /* ignore */ }
+    }
+  }
+  if (fingerprint === lastConfigHistoryHash) return
   // 进程重启后内存指纹丢失，用远端已有的同名指纹文件兜底去重
   if (files.some(f => !f.isDir && f.name.endsWith(`-${fingerprint}.js`) && historyNameRe.test(f.name))) {
     lastConfigHistoryHash = fingerprint
@@ -1243,15 +1275,6 @@ async function backupSystemConfigHistory(cl: OpenListClient, cfg: BackupConfig, 
   await cl.upload(configPath, `${historyDir}/config-${stamp}-${fingerprint}.js`)
   lastConfigHistoryHash = fingerprint
   summary.uploaded++
-
-  const days = Number(lx?.config?.['configBackup.retentionDays'])
-  const cutoff = Date.now() - (Number.isFinite(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000
-  for (const f of files) {
-    if (f.isDir || !historyNameRe.test(f.name)) continue
-    const modified = parseMod(f.modified)
-    if (modified == null || modified >= cutoff) continue
-    try { await cl.remove(f.path) } catch { /* ignore */ }
-  }
 }
 
 function dataBackupContext() {
