@@ -22,7 +22,7 @@ import { invalidateDislikeCache } from '@/server/utils/dislikeCache'
 import { invalidateSubsonicPlaylistCache } from '@/server/integrations/subsonic'
 import {
   createRatingSnapshot, saveRatingImport, listRatingSnapshots,
-  readRatingSnapshot, restoreRatingSnapshot, deleteRatingSnapshot,
+  readRatingSnapshot, restoreRatingSnapshot, deleteRatingSnapshot, isValidSnapshotId,
 } from './ratingSnapshot'
 import { createMsg2call } from 'message2call'
 import { handleFileManager } from './integrations/fileManager'
@@ -2036,6 +2036,11 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
           res.end('Missing id')
           return
         }
+        if (!isValidSnapshotId(id)) {
+          res.writeHead(400)
+          res.end('Invalid id')
+          return
+        }
         try {
           const kindParam = urlObj.searchParams.get('kind')
           let data: any = null
@@ -2100,6 +2105,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
           const body = await readBody(req)
           const { id, kind } = JSON.parse(body)
           if (!id) throw new Error('Missing id')
+          if (!isValidSnapshotId(id)) throw new Error('Invalid id')
 
           if (kind === 'dislike' && userSpace.dislikeManage) {
             await userSpace.dislikeManage.restoreSnapshot(id)
@@ -2305,6 +2311,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
           const body = await readBody(req)
           const { id, kind } = JSON.parse(body)
           if (!id) throw new Error('Missing id')
+          if (!isValidSnapshotId(id)) throw new Error('Invalid id')
 
           let removed = false
           if (kind === 'rating') {

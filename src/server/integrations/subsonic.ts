@@ -2052,6 +2052,9 @@ class SubsonicHandler {
         for (const m of [...listData.loveList, ...listData.defaultList, ...listData.userList.flatMap(l => l.list || [])]) all.set(m.id, m)
         this.loadOnlineSongCache()
         for (const [id, m] of this.onlineSongCache) if (!all.has(id)) all.set(id, m)
+        // 补充未收藏的本地歌曲：cacheOnlineSong 会跳过本地歌曲，仅靠歌单会漏掉已评分的 NAS 曲目；
+        // 在线缓存超出上限被淘汰的已评分歌曲暂无法覆盖（可接受）。
+        for (const t of await getLocalTracks(username)) if (!all.has(t.id)) all.set(t.id, localMusic(t))
 
         const assigned = new Set<string>()
         for (const [id, music] of all) {
@@ -5534,6 +5537,8 @@ class SubsonicHandler {
         ]) all.set(m.id, m)
         this.loadOnlineSongCache()
         for (const [id, m] of this.onlineSongCache) if (!all.has(id)) all.set(id, m)
+        // 同样补充未收藏的本地歌曲，避免手动同步漏掉本地曲目的 dislike 规则
+        for (const t of await getLocalTracks(username)) if (!all.has(t.id)) all.set(t.id, localMusic(t))
         const candidates = Array.from(all.values())
         summary.scanned = candidates.length
         if (candidates.length === 0) return summary

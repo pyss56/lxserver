@@ -4294,7 +4294,10 @@ class App {
             row('本地哈希', f.local_hash) +
             row('更新时间', f.updated_at) +
             row('错误信息', f.error) +
-            row('缓存元数据', f.cache_metadata ? JSON.stringify(JSON.parse(f.cache_metadata || '{}'), null, 2) : '') +
+            row('缓存元数据', (() => {
+                if (!f.cache_metadata) return ''
+                try { return JSON.stringify(JSON.parse(f.cache_metadata), null, 2) } catch { return String(f.cache_metadata) }
+            })()) +
             '</table>'
         const modal = document.getElementById('modal')
         const title = document.getElementById('modal-title')
@@ -4364,6 +4367,10 @@ class App {
         }
         const scopeMap = { media: 'cache,music', system: 'system', snapshot: 'list' }
         this._olbFolderScope = scopeMap[name] || ''
+        // 切换页签是新的筛选上下文：清空选中、重置页码与选中计数，避免沿用上一页签状态
+        this._olbSelected = new Set()
+        this._olbPage = 1
+        this.updateOlbSelCount()
         for (const [btnId, paneId] of Object.values(map)) {
             const b = document.getElementById(btnId); if (b) b.classList.remove('active')
             const p = document.getElementById(paneId); if (p) p.classList.remove('active')
@@ -4406,8 +4413,8 @@ class App {
         if (f.folder_type === 'list') return 'list'
         if (f.folder_type === 'data') {
             const p = (f.local_path || f.name || '')
-            if (/(^|[\/])(dislike)[\/]snapshot([\/]|$)/i.test(p)) return 'dislike'
-            if (/(^|[\/])(list)[\/]snapshot([\/]|$)/i.test(p)) return 'list'
+            if (/(^|[\\/])(dislike)[\\/]snapshot([\\/]|$)/i.test(p)) return 'dislike'
+            if (/(^|[\\/])(list)[\\/]snapshot([\\/]|$)/i.test(p)) return 'list'
         }
         return ''
     }

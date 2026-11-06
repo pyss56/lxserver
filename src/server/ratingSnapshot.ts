@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { getUserDirname } from '@/user'
+import { getUserConfig } from '@/user/data'
 
 /**
  * 「我的评分」快照（第三种备份类型）。
@@ -33,7 +34,22 @@ const metaPath = (username: string) => path.join(userDir(username), 'subsonic-me
 const ratingDir = (username: string) => path.join(userDir(username), 'rating')
 const snapshotDir = (username: string) => path.join(ratingDir(username), 'snapshot')
 const infoPath = (username: string) => path.join(ratingDir(username), 'snapshotInfo.json')
-const snapshotPath = (username: string, id: string) => path.join(snapshotDir(username), `snapshot_${id}`)
+
+/**
+ * 快照 id 直接来自外部输入（下载/删除/恢复接口的 id 参数、导入时的文件名），
+ * 这里统一拒绝路径分隔符与上跳片段，避免拼进 snapshotPath 后发生路径穿越。
+ */
+export const isValidSnapshotId = (id: unknown): id is string => {
+  if (typeof id !== 'string') return false
+  if (!id || id.length > 200) return false
+  if (id === '.' || id === '..' || id.includes('..')) return false
+  return !/[\\/:*?"<>|]/.test(id)
+}
+
+const snapshotPath = (username: string, id: string) => {
+  if (!isValidSnapshotId(id)) throw new Error('Invalid snapshot id')
+  return path.join(snapshotDir(username), `snapshot_${id}`)
+}
 
 const normalizeMeta = (data: any): RatingMeta => ({
   starredAlbums: Array.isArray(data?.starredAlbums) ? data.starredAlbums : [],
@@ -73,6 +89,25 @@ const ensureDirs = (username: string) => fs.mkdirSync(snapshotDir(username), { r
 
 const md5 = (text: string) => createHash('md5').update(text).digest('hex')
 
+/** 自动评分快照保留上限：导入快照永久保留，只清理超量的系统快照（保留最新 max 份） */
+const cleanupAutoSnapshots = (username: string) => {
+  try {
+    const info = readInfo(username)
+    const max = Math.max(1, Number(getUserConfig(username)?.maxSnapshotNum) || Number(global.lx.config.maxSnapshotNum) || 10)
+    const entries = fs.readdirSync(snapshotDir(username))
+      .filter(file => file.startsWith('snapshot_'))
+      .map(file => ({
+        id: file.slice('snapshot_'.length),
+        mtime: fs.statSync(path.join(snapshotDir(username), file)).mtimeMs,
+      }))
+      .filter(entry => !info.imported.includes(entry.id))
+      .sort((a, b) => b.mtime - a.mtime)
+    for (const entry of entries.slice(max)) {
+      try { fs.unlinkSync(snapshotPath(username, entry.id)) } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+
 /** 按当前评分内容生成（或复用）一份系统快照，返回快照 id */
 export const createRatingSnapshot = async (username: string): Promise<string> => {
   const meta = readMeta(username)
@@ -80,6 +115,7 @@ export const createRatingSnapshot = async (username: string): Promise<string> =>
   ensureDirs(username)
   const file = snapshotPath(username, id)
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(meta), 'utf8')
+  cleanupAutoSnapshots(username)
   return id
 }
 

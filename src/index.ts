@@ -95,7 +95,9 @@ const dataPath = envParams.DATA_PATH ?? path.join(__dirname, '../data')
 const resolvedConfigPath = process.env.CONFIG_PATH || path.join(dataPath, 'config.js')
 
 // [本地配置备份] 按周期生成 config-<槽位>.js，保留可配置天数（见 configBackup.*）
+// 定时 / 启动槽位与「保存配置」触发的槽位分开，避免保存操作打乱定时备份节奏
 let lastBackupSlot = ''
+let lastSaveBackupSlot = ''
 
 const getConfigBackupDir = (): string => {
   const dir = global.lx?.config['configBackup.dir']
@@ -198,25 +200,29 @@ const migrateConfigBackups = (targetBackupDir: string) => {
   }
 }
 
-// 按配置的备份周期生成槽位键：周期≥24h 按天（同日覆盖），否则带时分（每周期一个文件）
-// 备份后顺带清理过期文件
-const backupConfig = () => {
+// 按配置的备份周期生成槽位键：定时触发周期≥24h 按天（同日覆盖），否则带时分（每周期一个文件）
+// 保存触发固定按天去重，不参与定时槽位；备份后顺带清理过期文件
+const backupConfig = (trigger: 'schedule' | 'save' = 'schedule') => {
   if (global.lx?.config['configBackup.enable'] === false) return
   const backupDir = getConfigBackupDir()
   migrateConfigBackups(backupDir)
   const intervalHours = Math.max(1, Number(global.lx?.config?.['configBackup.intervalHours']) || 24)
   const now = new Date()
   const dateStr = getTodayStr()
-  const slotKey = intervalHours >= 24
+  const slotKey = trigger === 'save'
     ? dateStr
-    : `${dateStr}-${pad2(now.getHours())}${pad2(now.getMinutes())}`
-  if (slotKey === lastBackupSlot) return
+    : (intervalHours >= 24 ? dateStr : `${dateStr}-${pad2(now.getHours())}${pad2(now.getMinutes())}`)
+  if (slotKey === (trigger === 'save' ? lastSaveBackupSlot : lastBackupSlot)) return
   try {
     if (!global.lx?.configPath || !fs.existsSync(global.lx.configPath)) return
     fs.mkdirSync(backupDir, { recursive: true })
     fs.copyFileSync(global.lx.configPath, path.join(backupDir, `config-${slotKey}.js`))
-    lastBackupSlot = slotKey
-    if (global.lx) global.lx.lastConfigBackupAt = Date.now()
+    if (trigger === 'save') {
+      lastSaveBackupSlot = slotKey
+    } else {
+      lastBackupSlot = slotKey
+      if (global.lx) global.lx.lastConfigBackupAt = Date.now()
+    }
     console.log(`[Config] Local backup saved to ${backupDir}/config-${slotKey}.js`)
   } catch (err) {
     console.error('[Config] Failed to backup config:', err)
@@ -290,7 +296,7 @@ const saveConfigToFile = () => {
     fs.renameSync(temporary, global.lx.configPath)
     lastConfigHash = crypto.createHash('md5').update(content).digest('hex')
     // console.log('Current memory config saved to ' + global.lx.configPath)
-    backupConfig()
+    backupConfig('save')
   } catch (err) {
     console.error('Failed to save config file:', err)
     throw err
@@ -956,6 +962,8 @@ const getNextRunTime = (anchor: string, intervalMs: number, now: number): number
   return t
 }
 let configBackupTimer: ReturnType<typeof setTimeout> | undefined
+// setTimeout 最大延迟为 2^31-1 毫秒（约 24.8 天）；备份周期可配到 365 天，直接使用会溢出成 1ms 死循环
+const MAX_TIMER_DELAY = 2 ** 31 - 1
 const scheduleConfigBackup = () => {
   const intervalHours = Math.max(1, Number(global.lx?.config?.['configBackup.intervalHours']) || 24)
   const intervalMs = intervalHours * 60 * 60 * 1000
@@ -964,9 +972,14 @@ const scheduleConfigBackup = () => {
   const nextRun = getNextRunTime(anchor, intervalMs, now)
   if (global.lx) global.lx.nextConfigBackupAt = nextRun
   configBackupTimer = setTimeout(() => {
+    // 未到目标时间说明是被上限截断的分段挂起，仅重新挂起继续等待
+    if (Date.now() < nextRun) {
+      scheduleConfigBackup()
+      return
+    }
     backupConfig()
     scheduleConfigBackup()
-  }, nextRun - now)
+  }, Math.min(nextRun - now, MAX_TIMER_DELAY))
   if (typeof configBackupTimer.unref === 'function') configBackupTimer.unref()
 }
 

@@ -119,7 +119,13 @@ function parseUserBackups(raw: any): UserBackupCfg[] {
   if (!raw) return []
   try {
     const arr = typeof raw === 'string' ? JSON.parse(raw) : raw
-    return Array.isArray(arr) ? (arr as UserBackupCfg[]) : []
+    if (!Array.isArray(arr)) return []
+    // 兼容旧配置：openlist.keepLocalAfterUpload === false 时，未显式指定 mode 的条目迁移为 upload-delete
+    const legacyDelete = (globalThis as any).lx?.config?.['openlist.keepLocalAfterUpload'] === false
+    return (arr as UserBackupCfg[]).map(entry => {
+      if (legacyDelete && entry && !entry.mode) return { ...entry, mode: 'upload-delete' }
+      return entry
+    })
   } catch {
     return []
   }
@@ -195,7 +201,11 @@ function hashFile(localPath: string): string {
 
 function folderEnabled(user: string, folder: string, cfg = getConfig()): boolean {
   const entry = cfg.userBackups.find(u => u.user === user && u.enabled)
-  if (!entry) return user === '_system' && cfg.backupSystemConfig
+  if (!entry) {
+    // 歌单 / 不喜欢快照对真实用户全局生效，不依赖 userBackups 勾选
+    if (folder === 'list') return true
+    return user === '_system' && cfg.backupSystemConfig
+  }
   return folder === 'cache' ? ((global.lx.config as any)['backup.openlist.types'] !== undefined ? entry.backupCache === true : entry.backupCache !== false) : folder === 'music' ? entry.backupDownload !== false : entry.backupSnapshot !== false
 }
 
@@ -205,8 +215,8 @@ function rowEnabled(row: any, cfg = getConfig()): boolean {
     const type = relative ? backupType(relative) : null
     return cfg.enable && row.user === '_system' && !!type && getBackupTypes('openlist', global.lx.config as any).includes(type)
   }
-  // 启用统一数据备份后，不再执行旧音乐/快照记录的上传即删策略。
-  if ((global.lx.config as any)['backup.openlist.types'] !== undefined && row.folder_type !== 'cache') return false
+  // 启用统一数据备份后，不再执行旧音乐/快照记录的上传即删策略；但歌单 / 不喜欢快照仍需放行
+  if ((global.lx.config as any)['backup.openlist.types'] !== undefined && row.folder_type !== 'cache' && row.folder_type !== 'list') return false
   return cfg.enable && folderEnabled(row.user, row.folder_type, cfg)
 }
 
@@ -297,7 +307,13 @@ function resolveUsernameFromPath(p?: string | null): string | null {
   const m = String(p).replace(/\\/g, '/').match(/\/users\/([^/]+)\//)
   if (!m) return null
   if (dirNameToUserCache === null) dirNameToUserCache = buildDirNameToUserMap()
-  return dirNameToUserCache[m[1]] || null
+  let name = dirNameToUserCache[m[1]]
+  if (!name) {
+    // 新增 / 重命名用户后缓存会过期，未命中时重建一次再查
+    dirNameToUserCache = buildDirNameToUserMap()
+    name = dirNameToUserCache[m[1]]
+  }
+  return name || null
 }
 
 /** 解析某用户 dislike 快照目录（与歌单快照同一 snapshot.backupPath 体系，但使用独立的 dislike/snapshot 子目录，避免互相覆盖）。 */
@@ -317,6 +333,8 @@ function resolveDislikeSnapshotDir(user: string): string {
 
 /** 上传单个用户某类快照目录（list 或 dislike）到 OpenList，folder_type 仍记 'list'（复用旧表字段，避免 schema 变更）。 */
 async function backupUserSnapshotKind(cl: OpenListClient, cfg: BackupConfig, summary: SyncSummary, user: string, kind: 'list' | 'dislike'): Promise<void> {
+  // 显式关闭快照备份（backupSnapshot: false）或该用户不可上传时直接跳过，避免登记后卡在 pending
+  if (!folderEnabled(user, 'list', cfg)) return
   const dir = kind === 'list' ? resolveSnapshotDir(user) : resolveDislikeSnapshotDir(user)
   if (!dir || !fs.existsSync(dir)) return
   for (const lp of walkLocal(dir, 'list')) {
@@ -1363,10 +1381,13 @@ async function runSyncImpl(opts: { user?: string; folder?: 'cache' | 'music' | '
   const summary: SyncSummary = { uploaded: 0, downloaded: 0, deleted: 0, errors: [] }
   const selectedData = (global.lx.config as any)['backup.openlist.types'] !== undefined
   for (const entry of cfg.userBackups) {
+    // 手动指定 folder='list' 只补快照，不应该顺带跑 cache/music 的同步与删除
+    if (opts.folder === 'list') break
     if (!entry.enabled) continue
     if (opts.user && entry.user !== opts.user) continue
     const mode = effectiveMode(entry, cfg)
-    const folders: Array<'cache' | 'music'> = opts.folder && opts.folder !== 'list' ? [opts.folder] : (selectedData ? ['cache'] : ['cache', 'music'])
+    // 上面的 break 已排除 'list'，这里的 opts.folder 只可能是 cache / music
+    const folders: Array<'cache' | 'music'> = opts.folder ? [opts.folder] : (selectedData ? ['cache'] : ['cache', 'music'])
     for (const ft of folders) {
       if (selectedData && ft !== 'cache') continue
       const dir = resolveUserDir(entry, ft, cfg)
