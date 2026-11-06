@@ -290,7 +290,9 @@ const readExistingConfigKeys = (): string[] => {
     const resolved = require.resolve(global.lx.configPath)
     delete require.cache[resolved]
     const existing = require(global.lx.configPath)
-    return Object.keys(existing || {})
+    // 值为 undefined 的键在 margeConfig 中会被跳过、JSON.stringify 写回时也会消失，
+    // 不能算作「本次写回丢失的键」，否则一份带 undefined 的配置会让启动直接抛错
+    return Object.keys(existing || {}).filter(key => (existing as any)[key] !== undefined)
   } catch {
     return []
   }
@@ -1007,10 +1009,13 @@ saveConfigToFile(openlistKeysRemovedFromDisk)
 const getNextRunTime = (anchor: string, intervalMs: number, now: number): number => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(anchor)
   if (!m) return now + intervalMs
-  const base = new Date(now)
-  base.setHours(Number(m[1]), Number(m[2]), 0, 0)
-  const diff = now - base.getTime()
-  let t = base.getTime() + Math.ceil(Math.max(diff, 0) / intervalMs) * intervalMs
+  const hour = Math.min(23, Math.max(0, Number(m[1])))
+  const minute = Math.min(59, Math.max(0, Number(m[2])))
+  // 以固定历元（本地 1970-01-01 HH:MM）为网格基准，而不是「当天锚点」：
+  // 周期不能整除 24 小时时，用当天锚点会让相位每天被重置，实际间隔小于配置值。
+  const epochBase = new Date(1970, 0, 1, hour, minute, 0, 0).getTime()
+  const k = Math.ceil((now - epochBase) / intervalMs)
+  let t = epochBase + k * intervalMs
   if (t <= now) t += intervalMs
   return t
 }
@@ -1024,16 +1029,19 @@ const scheduleConfigBackup = () => {
   const now = Date.now()
   const nextRun = getNextRunTime(anchor, intervalMs, now)
   if (global.lx) global.lx.nextConfigBackupAt = nextRun
-  configBackupTimer = setTimeout(() => {
-    // 未到目标时间说明是被上限截断的分段挂起，仅重新挂起继续等待
-    if (Date.now() < nextRun) {
-      scheduleConfigBackup()
+  // 目标时间只算一次：超长周期被 MAX_TIMER_DELAY 截断后继续等待剩余时间，
+  // 若在回调里重新调度会重算 nextRun（基准随 now 前移），长周期永远等不到。
+  const arm = () => {
+    const remain = nextRun - Date.now()
+    if (remain > 0) {
+      configBackupTimer = setTimeout(arm, Math.min(remain, MAX_TIMER_DELAY))
+      if (typeof configBackupTimer.unref === 'function') configBackupTimer.unref()
       return
     }
     backupConfig()
     scheduleConfigBackup()
-  }, Math.min(nextRun - now, MAX_TIMER_DELAY))
-  if (typeof configBackupTimer.unref === 'function') configBackupTimer.unref()
+  }
+  arm()
 }
 
 // 启动即备份一次，并按当前配置调度后续自动备份
