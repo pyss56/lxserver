@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { closeBackupDb } from '../src/server/openlistBackupDb'
+import { DatabaseSync } from 'node:sqlite'
+import { closeBackupDb, getBackupDb } from '../src/server/openlistBackupDb'
 import {
   DEFAULT_OPENLIST_CONFIG,
   hasOpenlistConfigRecord,
@@ -144,5 +145,29 @@ test('OpenList 配置存储与运行时门面', async t => {
 
     saveRuntimeConfig({ enable: false })
     assert.equal(getOpenlistClient(), null)
+  })
+
+  await t.test('连接启用 WAL 与 busy_timeout，写冲突时等待而不是立即报 database is locked', (t: any) => {
+    const dir = useTempData(t)
+    const db = getBackupDb()
+    const mode = db.prepare('PRAGMA journal_mode').get() as any
+    assert.equal(String(Object.values(mode)[0]).toLowerCase(), 'wal')
+    const timeout = db.prepare('PRAGMA busy_timeout').get() as any
+    assert.equal(Number(Object.values(timeout)[0]), 8000)
+
+    // 另一连接持有写锁时，当前连接的写入应等待超时而非立刻失败
+    const other = new DatabaseSync(path.join(dir, 'openlist-backup.db'))
+    other.exec('PRAGMA busy_timeout = 8000')
+    other.exec('BEGIN IMMEDIATE')
+    try {
+      db.exec('PRAGMA busy_timeout = 200')
+      const started = Date.now()
+      assert.throws(() => db.exec('UPDATE openlist_backup_files SET status = status'))
+      assert.ok(Date.now() - started >= 150, '应当等待 busy_timeout 后才失败')
+    } finally {
+      other.exec('ROLLBACK')
+      other.close()
+      db.exec('PRAGMA busy_timeout = 8000')
+    }
   })
 })
