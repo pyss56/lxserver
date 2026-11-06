@@ -3,5 +3,5 @@
 // 服务端拦截 /js/config.js 请求, 使用 package.json 版本号并合并服务端配置后返回
 window.CONFIG = {
     buildHash: '475edaf',
-    version: 'v2.1.4.18',
+    version: 'v2.1.4.19',
 };
