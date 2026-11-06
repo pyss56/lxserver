@@ -52,11 +52,12 @@ export const DEFAULT_OPENLIST_CONFIG: OpenlistConfig = {
   userBackups: [],
 }
 
-let tablesEnsured = false
+// 与具体连接绑定：连接被关闭（closeBackupDb）后重建的是新实例，需要重新建表
+let ensuredDb: ReturnType<typeof getBackupDb> | null = null
 
 const ensureTables = () => {
-  if (tablesEnsured) return
   const db = getBackupDb()
+  if (ensuredDb === db) return
   db.exec(`CREATE TABLE IF NOT EXISTS openlist_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     enable INTEGER NOT NULL DEFAULT 0,
@@ -84,7 +85,7 @@ const ensureTables = () => {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`)
-  tablesEnsured = true
+  ensuredDb = db
 }
 
 /** 数据表中是否已有 OpenList 配置记录（决定启动迁移是否执行） */
