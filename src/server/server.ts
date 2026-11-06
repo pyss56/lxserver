@@ -20,6 +20,10 @@ import { encodeAlbumRule } from '@/modules/dislike/utils'
 import { normalizeText } from '@/server/utils/songVersion'
 import { invalidateDislikeCache } from '@/server/utils/dislikeCache'
 import { invalidateSubsonicPlaylistCache } from '@/server/integrations/subsonic'
+import {
+  createRatingSnapshot, saveRatingImport, listRatingSnapshots,
+  readRatingSnapshot, restoreRatingSnapshot, deleteRatingSnapshot,
+} from './ratingSnapshot'
 import { createMsg2call } from 'message2call'
 import { handleFileManager } from './integrations/fileManager'
 import formidable from 'formidable'
@@ -1248,6 +1252,39 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
     accessLog.info(`${req.method} ${urlObj.pathname} from ${ip}`)
     const pathname = urlObj.pathname
 
+    // 快照类 API 统一鉴权加固（覆盖 snapshots / snapshot / restore-snapshot / delete-snapshot / upload-snapshot）：
+    // 1) 目标用户必须是已配置用户或公共空间 _open，避免为任意字符串创建孤儿数据目录
+    // 2) 取消 _open 匿名免鉴权，公共空间同样需要超管；非超管须持有效用户 token 且与 user 一致
+    // 3) 覆盖性回滚（导入即恢复、手动回滚）仅允许超管执行
+    // 各端点内部原有的鉴权保留作为二次校验，此处负责拦截匿名与非法目标用户。
+    if (pathname.startsWith('/api/data/') && pathname.includes('snapshot')) {
+      const snapshotUserParam = urlObj.searchParams.get('user')
+      const auth = req.headers['x-frontend-auth']
+      const isAdmin = !!auth && auth === global.lx.config['admin.password']
+      const isPublicParam = snapshotUserParam === 'default' || snapshotUserParam === '_open' || snapshotUserParam === 'open'
+      const isKnownUser = !!snapshotUserParam && (isPublicParam || global.lx.config.users.some(u => u.name === snapshotUserParam))
+      if (!isKnownUser) {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end('Invalid user')
+        return
+      }
+      const isOverwrite = pathname === '/api/data/restore-snapshot' ||
+        (pathname === '/api/data/upload-snapshot' && urlObj.searchParams.get('restore') === '1')
+      if (isOverwrite && !isAdmin) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end('Forbidden: admin required')
+        return
+      }
+      if (!isAdmin) {
+        const verified = verifyUserAuth(req)
+        if (!verified || isPublicParam || verified !== snapshotUserParam) {
+          res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end('Unauthorized')
+          return
+        }
+      }
+    }
+
     // 读取路径配置（每次请求都重新读取，保存后立刻生效）
     const normalizePath = (p: string) => (p || '').replace(/\/+$/, '')
     const playerPath = global.lx.config['player.path'] ?? '/'
@@ -1948,9 +1985,11 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         try {
           const listSnaps = await userSpace.listManage.getSnapshotList()
           const dislikeSnaps = userSpace.dislikeManage ? await userSpace.dislikeManage.snapshotDataManage.getSnapshotListWithMeta() : []
+          const ratingSnaps = await listRatingSnapshots(verifiedUser)
           const list = [
-            ...listSnaps.map(s => ({ ...s, kind: 'list' })),
-            ...dislikeSnaps.map(s => ({ ...s, kind: 'dislike' })),
+            ...listSnaps.map(s => ({ ...s, kind: 'list', origin: s.origin || 'auto' })),
+            ...dislikeSnaps.map(s => ({ ...s, kind: 'dislike', origin: s.origin || 'auto' })),
+            ...ratingSnaps.map(s => ({ ...s, kind: 'rating', origin: s.origin || 'auto' })),
           ].sort((a, b) => (b.time || 0) - (a.time || 0))
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -1998,9 +2037,20 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
           return
         }
         try {
-          let data: any = await userSpace.listManage.getSnapshot(id)
-          if (!data && userSpace.dislikeManage) {
-            data = await userSpace.dislikeManage.snapshotDataManage.getSnapshot(id)
+          const kindParam = urlObj.searchParams.get('kind')
+          let data: any = null
+          if (kindParam === 'rating') {
+            const meta = await readRatingSnapshot(verifiedUser, id)
+            if (meta) data = { type: 'lxRating_v1', ...meta }
+          } else {
+            data = await userSpace.listManage.getSnapshot(id)
+            if (!data && userSpace.dislikeManage) {
+              data = await userSpace.dislikeManage.snapshotDataManage.getSnapshot(id)
+            }
+            if (!data) {
+              const meta = await readRatingSnapshot(verifiedUser, id)
+              if (meta) data = { type: 'lxRating_v1', ...meta }
+            }
           }
           if (!data) {
             res.writeHead(404)
@@ -2054,6 +2104,8 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
           if (kind === 'dislike' && userSpace.dislikeManage) {
             await userSpace.dislikeManage.restoreSnapshot(id)
             invalidateDislikeCache(verifiedUser)
+          } else if (kind === 'rating') {
+            await restoreRatingSnapshot(verifiedUser, id)
           } else {
             await userSpace.listManage.restoreSnapshot(id)
             invalidateSubsonicPlaylistCache()
@@ -2251,13 +2303,16 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         const userSpace = getUserSpace(verifiedUser)
         try {
           const body = await readBody(req)
-          const { id } = JSON.parse(body)
+          const { id, kind } = JSON.parse(body)
           if (!id) throw new Error('Missing id')
 
           let removed = false
-          try { await userSpace.listManage.removeSnapshot(id); removed = true } catch { /* 尝试不喜欢快照 */ }
-          if (!removed && userSpace.dislikeManage) {
+          if (kind === 'rating') {
+            removed = await deleteRatingSnapshot(verifiedUser, id)
+          } else if (kind === 'dislike' && userSpace.dislikeManage) {
             try { await userSpace.dislikeManage.snapshotDataManage.removeSnapshot(id); removed = true } catch { /* ignore */ }
+          } else {
+            try { await userSpace.listManage.removeSnapshot(id); removed = true } catch { /* ignore */ }
           }
           if (!removed) throw new Error('快照不存在或删除失败')
 
@@ -2276,6 +2331,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         const userParam = urlObj.searchParams.get('user')
         const time = parseInt(urlObj.searchParams.get('time') || '0')
         const filename = urlObj.searchParams.get('filename')
+        const restore = urlObj.searchParams.get('restore') === '1'
 
         if (!userParam) {
           res.writeHead(400)
@@ -2308,47 +2364,93 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         try {
           const body = await readBody(req)
           let finalData = body
+          let kind: 'list' | 'dislike' | 'rating' = 'list'
 
-          // [核心兼容性修复] 检测是否为落雪音乐离线备份格式 (playList_v2)
-          try {
-            const jsonData = JSON.parse(body)
-            if (jsonData && jsonData.type === 'playList_v2' && Array.isArray(jsonData.data)) {
-              startupLog.info(`[Snapshot] Detected LX Music backup format for user ${verifiedUser}, converting back to internal format...`)
+          // 判定备份类型：
+          // 1) 落雪音乐离线备份 playList_v2 -> 转成服务器内部歌单快照格式
+          // 2) 「我不喜欢」备份 { dislikeList: [...] } -> 保持原始规则格式
+          // 3) 「我的评分」备份 lxRating_v1 / { ratings } -> 规范化为 subsonic-meta 结构
+          // 4) 其它 -> 视为服务器原生歌单快照（内部格式）
+          let jsonData: any = null
+          try { jsonData = JSON.parse(body) } catch { /* 非 JSON：按原生歌单快照处理 */ }
 
-              // 寻找默认列表
-              const defaultList = jsonData.data.find((l: any) => l.id === 'default')?.list || []
-              // 寻找收藏列表
-              const loveList = jsonData.data.find((l: any) => l.id === 'love')?.list || []
-              // 其他所有列表均作为用户列表
-              const userList = jsonData.data.filter((l: any) => l.id !== 'default' && l.id !== 'love')
-
-              // 拼装为服务器内部快照格式
-              const internalFormat = {
-                defaultList,
-                loveList,
-                userList
-              }
-
-              // 压缩为单行 JSON 以节省磁盘空间并保持与原生快照一致的大小
-              finalData = JSON.stringify(internalFormat)
-              startupLog.info(`[Snapshot] Conversion complete for user ${verifiedUser}.`)
-            }
-          } catch (parseErr) {
-            // 解析失败说明不是标准的 JSON 格式或已经是原始快照，保持原样即可
+          if (jsonData && jsonData.type === 'playList_v2' && Array.isArray(jsonData.data)) {
+            startupLog.info(`[Snapshot] Detected LX Music backup format for user ${verifiedUser}, converting back to internal format...`)
+            const defaultList = jsonData.data.find((l: any) => l.id === 'default')?.list || []
+            const loveList = jsonData.data.find((l: any) => l.id === 'love')?.list || []
+            const userList = jsonData.data.filter((l: any) => l.id !== 'default' && l.id !== 'love')
+            finalData = JSON.stringify({ defaultList, loveList, userList })
+            kind = 'list'
+            startupLog.info(`[Snapshot] Conversion complete for user ${verifiedUser}.`)
+          } else if (jsonData && Array.isArray(jsonData.dislikeList) && !Array.isArray(jsonData.defaultList) && !Array.isArray(jsonData.userList)) {
+            // 规范化为 dislike 快照格式，避免导入文件携带额外字段
+            finalData = JSON.stringify({ dislikeList: jsonData.dislikeList })
+            kind = 'dislike'
+          } else if (jsonData && (jsonData.type === 'lxRating_v1' || (
+            jsonData.ratings && typeof jsonData.ratings === 'object' && !Array.isArray(jsonData.ratings) &&
+            !Array.isArray(jsonData.dislikeList) && !Array.isArray(jsonData.defaultList) && !Array.isArray(jsonData.userList)
+          ))) {
+            finalData = JSON.stringify({
+              starredAlbums: Array.isArray(jsonData.starredAlbums) ? jsonData.starredAlbums : [],
+              starredArtists: Array.isArray(jsonData.starredArtists) ? jsonData.starredArtists : [],
+              starredArtistNames: Array.isArray(jsonData.starredArtistNames) ? jsonData.starredArtistNames : [],
+              ratings: jsonData.ratings && typeof jsonData.ratings === 'object' && !Array.isArray(jsonData.ratings) ? jsonData.ratings : {},
+            })
+            kind = 'rating'
           }
 
-          // 处理文件名：如果以 snapshot_ 开头，则去掉（因为 saveSnapshotWithTime 会自动加）
-          // 如果不以 snapshot_ 开头，则保持原样（saveSnapshotWithTime 会自动加 snapshot_ 前缀）
+          // 处理文件名：去掉 snapshot_ 前缀（保存时会自动加回）；并阻止路径穿越
           let name = filename
           if (name.startsWith('snapshot_')) {
             name = name.substring(9)
           }
+          if (!name || /[/\\]/.test(name) || name === '.' || name === '..' || name.includes('\0')) {
+            throw new Error('Invalid filename')
+          }
 
-          // 调用 ListManage 中的 saveSnapshotWithTime 方法
-          await userSpace.listManage.saveSnapshotWithTime(name, finalData, time)
+          // 导入即回滚会覆盖当前数据：先按类型保存一份「导入前状态」，保证操作可撤销
+          // createSnapshot 内容未变时会复用现有 latest，不会重复生成快照
+          let safetySnapshot: string | null = null
+          if (restore) {
+            if (kind === 'rating') {
+              safetySnapshot = await createRatingSnapshot(verifiedUser)
+            } else if (kind === 'dislike' && userSpace.dislikeManage) {
+              safetySnapshot = await userSpace.dislikeManage.createSnapshot()
+            } else {
+              safetySnapshot = await userSpace.listManage.createSnapshot()
+            }
+          }
+
+          // 按类型保存到对应快照目录
+          if (kind === 'rating') {
+            await saveRatingImport(verifiedUser, name, JSON.parse(finalData), time)
+          } else if (kind === 'dislike') {
+            if (!userSpace.dislikeManage) throw new Error('Dislike snapshot is not available')
+            await userSpace.dislikeManage.saveSnapshotWithTime(name, finalData, time)
+          } else {
+            await userSpace.listManage.saveSnapshotWithTime(name, finalData, time)
+          }
+
+          // 导入即回滚：恢复后主动失效派生缓存，避免 TTL 内返回陈旧数据
+          let restored = false
+          if (restore) {
+            if (kind === 'rating') {
+              await restoreRatingSnapshot(verifiedUser, name)
+            } else if (kind === 'dislike' && userSpace.dislikeManage) {
+              await userSpace.dislikeManage.restoreSnapshot(name)
+              invalidateDislikeCache(verifiedUser)
+            } else {
+              await userSpace.listManage.restoreSnapshot(name)
+              invalidateSubsonicPlaylistCache()
+            }
+            restored = true
+            startupLog.info(`[Snapshot] Imported backup ${name} (${kind}) restored for user ${verifiedUser}, safety snapshot ${safetySnapshot}`)
+          } else {
+            startupLog.info(`[Snapshot] Imported backup ${name} (${kind}) saved for user ${verifiedUser}`)
+          }
 
           res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ success: true }))
+          res.end(JSON.stringify({ success: true, kind, restored, safetySnapshot }))
         } catch (err: any) {
           res.writeHead(500)
           res.end(err.message)
@@ -7096,7 +7198,10 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             }
 
             const dislikeRatingThreshold = global.lx.config['subsonic.dislikeRating'] ?? 1
-            if (global.lx.config['subsonic.linkDislikeToRating'] && dislikeRatingThreshold > 0 && id && source) {
+            // 评星歌单开启时，1 星歌单承载「我不喜欢」，反向联动也需生效：
+            // 网页端点不喜欢 -> 回写 1 星，使该歌曲出现在 rating_1 歌单中。
+            const linkDislikeToRating = global.lx.config['subsonic.linkDislikeToRating'] || global.lx.config['subsonic.ratingPlaylists'] !== false
+            if (linkDislikeToRating && dislikeRatingThreshold > 0 && id && source) {
               const subId = id.startsWith(`${source}_`) ? id : `${source}_${id}`
               try {
                 const { syncDislikeToRating } = require('./integrations/subsonic')
@@ -7132,6 +7237,47 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             console.error('[黑名单 API] 处理异常:', err?.message)
             res.writeHead(500, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ success: false, message: err.message }))
+          }
+        })
+        return
+      }
+
+      // [手动联动同步] 导入/回滚不自动补数据；仅管理员在 Subsonic 配置页点按钮时按方向补齐目标侧数据
+      if (pathname === '/api/subsonic/sync-link' && req.method === 'POST') {
+        const auth = req.headers['x-frontend-auth']
+        if (auth !== global.lx.config['admin.password']) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ success: false, message: 'Unauthorized' }))
+          return
+        }
+        void readBody(req).then(async body => {
+          try {
+            const payload = JSON.parse(body || '{}')
+            const user = String(payload.user || '').trim()
+            const direction = String(payload.direction || '')
+            if (!user) throw new Error('Missing user')
+            if (direction !== 'ratingToDislike' && direction !== 'dislikeToRating') throw new Error('Invalid direction')
+
+            // 依托对应配置：对应方向开关未开启、或阈值关闭时，不补数据
+            const label = direction === 'ratingToDislike' ? '评星 → 不喜欢 自动联动' : '不喜欢 → 评星 自动联动'
+            const enabled = direction === 'ratingToDislike'
+              ? global.lx.config['subsonic.linkRatingToDislike'] === true
+              : global.lx.config['subsonic.linkDislikeToRating'] === true
+            if (!enabled) throw new Error(`请先在 Subsonic 配置中开启「${label}」并保存后再同步`)
+            const threshold = Number(global.lx.config['subsonic.dislikeRating'] ?? 1)
+            if (!Number.isFinite(threshold) || threshold <= 0) throw new Error('评分联动 dislike 阈值为 0（已关闭），无法同步')
+
+            const { syncRatingsToDislike, syncDislikesToRating } = require('./integrations/subsonic')
+            const summary = direction === 'ratingToDislike'
+              ? await syncRatingsToDislike(user)
+              : await syncDislikesToRating(user)
+            startupLog.info(`[LinkSync] ${direction} (user=${user}): added=${summary.added}, skipped=${summary.skipped}, failed=${summary.failed}`)
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: true, ...summary }))
+          } catch (err: any) {
+            startupLog.warn(`[LinkSync] 同步失败: ${err?.message}`)
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: false, message: err?.message || 'Sync failed' }))
           }
         })
         return
@@ -7298,6 +7444,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'subsonic.sharedListMode': global.lx.config['subsonic.sharedListMode'] ?? 'leaderboard',
             'subsonic.sharedListSort': global.lx.config['subsonic.sharedListSort'] ?? 'hot',
             'subsonic.dislikeRating': global.lx.config['subsonic.dislikeRating'] ?? 1,
+            'subsonic.ratingPlaylists': global.lx.config['subsonic.ratingPlaylists'] ?? true,
             'subsonic.linkRatingToDislike': global.lx.config['subsonic.linkRatingToDislike'] ?? false,
             'subsonic.linkDislikeToRating': global.lx.config['subsonic.linkDislikeToRating'] ?? false,
             'subsonic.hideDisliked': global.lx.config['subsonic.hideDisliked'] ?? true,
@@ -7598,6 +7745,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               }
               if (newConfig['subsonic.dislikeNormalizeName'] !== undefined) global.lx.config['subsonic.dislikeNormalizeName'] = !!newConfig['subsonic.dislikeNormalizeName']
               if (newConfig['subsonic.dislikeRequireSinger'] !== undefined) global.lx.config['subsonic.dislikeRequireSinger'] = !!newConfig['subsonic.dislikeRequireSinger']
+              if (newConfig['subsonic.ratingPlaylists'] !== undefined) global.lx.config['subsonic.ratingPlaylists'] = !!newConfig['subsonic.ratingPlaylists']
               if (newConfig['subsonic.linkRatingToDislike'] !== undefined) global.lx.config['subsonic.linkRatingToDislike'] = !!newConfig['subsonic.linkRatingToDislike']
               if (newConfig['subsonic.linkDislikeToRating'] !== undefined) global.lx.config['subsonic.linkDislikeToRating'] = !!newConfig['subsonic.linkDislikeToRating']
               if (newConfig['subsonic.recommendPoolSize'] !== undefined) global.lx.config['subsonic.recommendPoolSize'] = Number(newConfig['subsonic.recommendPoolSize'])

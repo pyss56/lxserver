@@ -1863,7 +1863,20 @@
                                 </div>
                                 <div class="config-toggle-row">
                                     <div class="config-toggle-info">
-                                        <span class="config-toggle-label">评星 → 不喜欢 自动联动 <button type="button" class="help-icon" aria-label="查看帮助说明" onclick="app.toggleHelp(this)" data-help="Subsonic 客户端打低星时写回原生 dislike 规则；关闭则评分仅记录、不触碰不喜欢">?</button></span>
+                                        <span class="config-toggle-label">评星歌单（1~5 星） <button type="button" class="help-icon" aria-label="查看帮助说明" onclick="app.toggleHelp(this)" data-help="向 Subsonic 客户端暴露 1~5 星虚拟只读歌单，不落盘、不影响 LX 客户端我的歌单。1 星歌单承载「我不喜欢」：开启后强制双向联动，客户端打 1 星即加入不喜欢，提高或清除评分即移除">?</button></span>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" name="subsonic.ratingPlaylists" />
+                                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                    </label>
+                                </div>
+                                <div class="config-toggle-row">
+                                    <div class="config-toggle-info">
+                                        <span class="config-toggle-label">评星 → 不喜欢 自动联动 <button type="button" class="help-icon" aria-label="查看帮助说明" onclick="app.toggleHelp(this)" data-help="Subsonic 客户端打低星时写回原生 dislike 规则；评星歌单开启时此项强制生效">?</button></span>
+                                        <button type="button" id="sync-rating-to-dislike-btn" class="btn-secondary hidden"
+                                            style="margin-top: 8px; padding: 4px 10px; font-size: 0.8rem; white-space: nowrap;"
+                                            onclick="app.syncLink('ratingToDislike')"
+                                            title="按当前配置把低星评分补写成「我不喜欢」规则；导入 / 回滚不会自动执行">同步：补齐「我不喜欢」</button>
                                     </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" name="subsonic.linkRatingToDislike" />
@@ -1873,11 +1886,23 @@
                                 <div class="config-toggle-row">
                                     <div class="config-toggle-info">
                                         <span class="config-toggle-label">不喜欢 → 评星 自动联动 <button type="button" class="help-icon" aria-label="查看帮助说明" onclick="app.toggleHelp(this)" data-help="网页端/Subsonic 点「不喜欢」回写客户端评分（低星）；关闭则不喜欢仅写入规则、不回写评星">?</button></span>
+                                        <button type="button" id="sync-dislike-to-rating-btn" class="btn-secondary hidden"
+                                            style="margin-top: 8px; padding: 4px 10px; font-size: 0.8rem; white-space: nowrap;"
+                                            onclick="app.syncLink('dislikeToRating')"
+                                            title="按当前配置把「我不喜欢」规则补写成低星评分；导入 / 回滚不会自动执行">同步：补齐低星评分</button>
                                     </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" name="subsonic.linkDislikeToRating" />
                                         <span class="toggle-track"><span class="toggle-thumb"></span></span>
                                     </label>
+                                </div>
+                                <div class="config-field" id="link-sync-field">
+                                    <label class="config-label">联动数据同步目标用户</label>
+                                    <select id="subsonic-sync-user" class="form-input config-input"></select>
+                                    <div class="config-hint" style="line-height: 1.5; color: var(--text-secondary);">
+                                        导入 / 回滚备份只覆盖对应数据，<strong>不会自动联动</strong>；需要对齐另一侧数据时，请在对应开关打开并保存后，点击上方「同步」按钮手动执行。
+                                    </div>
+                                    <div id="link-sync-result" class="config-hint hidden" style="line-height: 1.5;"></div>
                                 </div>
                                 </div>
                                 <div class="config-section-title">音质 / 源优选 (Subsonic)</div>
@@ -2387,6 +2412,11 @@
                                 </div>
                                 <input type="hidden" id="snapshot-user-select" value="">
                                 <input type="file" id="snapshot-upload-input" style="display: none;" accept=".json">
+                                <label style="display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; font-size: 0.85rem; cursor: pointer;"
+                                    title="导入下载的备份后立即覆盖当前数据（回滚）；取消勾选则仅保存为一份新快照">
+                                    <input type="checkbox" id="snapshot-upload-restore" checked>
+                                    导入后恢复
+                                </label>
                                 <button onclick="app.triggerUploadSnapshot()" class="btn-secondary"
                                     style="white-space: nowrap; flex-shrink: 0;">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
