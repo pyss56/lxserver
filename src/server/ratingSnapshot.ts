@@ -115,6 +115,11 @@ export const createRatingSnapshot = async (username: string): Promise<string> =>
   ensureDirs(username)
   const file = snapshotPath(username, id)
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(meta), 'utf8')
+  else {
+    // 复用内容相同的旧快照时刷新 mtime：清理按 mtime 只保留最新 N 份，不刷新会把刚复用的快照当成最旧的删掉
+    const now = new Date()
+    try { fs.utimesSync(file, now, now) } catch { /* ignore */ }
+  }
   cleanupAutoSnapshots(username)
   return id
 }

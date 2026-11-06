@@ -5655,7 +5655,8 @@ class App {
                 this._snapshotKind = sel.value;
                 this.loadSnapshots();
             });
-            parent.insertBefore(sel, container);
+            // 插到表头之前，避免把表头与快照列表隔开
+            parent.insertBefore(sel, parent.querySelector('.snapshots-table-header') || container);
         }
 
         if (!document.getElementById('snapshot-origin-filter')) {
@@ -5669,7 +5670,7 @@ class App {
                 this._snapshotOrigin = sel.value;
                 this.loadSnapshots();
             });
-            parent.insertBefore(sel, container);
+            parent.insertBefore(sel, parent.querySelector('.snapshots-table-header') || container);
         }
 
         // 动态插入的 select 需要立即套用自定义下拉样式（initCustomSelects 自带幂等保护）
