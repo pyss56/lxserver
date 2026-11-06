@@ -979,8 +979,12 @@ if (!fs.existsSync(openLibDir)) {
 let openlistKeysRemovedFromDisk = false
 try {
   const { migrateOpenlistConfigFromLegacy, stripOpenlistKeysFromConfig } = require('./server/openlistConfigDb')
+  const legacyOpenlistKeys = Object.keys(global.lx.config).filter(key => key.startsWith('openlist.'))
   if (migrateOpenlistConfigFromLegacy(global.lx.config)) {
     console.log('[Config] OpenList 配置已迁移到 SQLite（openlist_config / openlist_user_backup）')
+  } else if (legacyOpenlistKeys.length) {
+    // 已有配置时不再用 config.js 覆盖，明确提示用户去页面改，避免改配置文件却看不到生效
+    console.warn('[Config] 数据库中已有 OpenList 配置，本次忽略 config.js 中的旧值；如需修改请前往 Web 管理页 →「OpenList 备份/同步」')
   }
   // 只把「磁盘 config.js 中真实存在」的 openlist 键算作有意删除，其余键仍走严格校验
   const diskKeys = new Set(readExistingConfigKeys())
