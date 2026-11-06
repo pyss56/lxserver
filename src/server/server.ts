@@ -34,10 +34,10 @@ import { initUserApis, callUserApiGetMusicUrl, isSourceSupported, getLoadedApis,
 import { startVerifyScheduler, runSyncNow, listBackups, retryBackup, deleteOpenlistBackups, registerFileCacheSyncHook, restoreOpenlistData, triggerBackfillUploadDelete } from '@/server/openlistBackup'
 import { BACKUP_TYPE_INFO, getBackupTypes, normalizeBackupTypes } from '@/utils/backupPolicy'
 import { OpenListClient } from '@/server/openlistClient'
-import { loadOpenlistConfig, saveOpenlistConfig } from '@/server/openlistConfigDb'
+import { getOpenlistConfig, saveOpenlistConfig } from '@/server/openlistRuntime'
 
 async function validateOpenListConfig(newConfig: any): Promise<void> {
-  const current = loadOpenlistConfig()
+  const current = getOpenlistConfig()
   const enable = newConfig['openlist.enable'] !== undefined ? !!newConfig['openlist.enable'] : current.enable
   if (!enable) return
   const endpoint = newConfig['openlist.endpoint'] !== undefined ? newConfig['openlist.endpoint'] : (current.endpoint || '')
@@ -75,7 +75,7 @@ function scheduleOpenlistSync(): void {
   if (pendingOpenlistSyncTimer) clearTimeout(pendingOpenlistSyncTimer)
   pendingOpenlistSyncTimer = setTimeout(() => {
     pendingOpenlistSyncTimer = null
-    if (!loadOpenlistConfig().enable) return
+    if (!getOpenlistConfig().enable) return
     void runSyncNow({}).catch((e: any) => {
       console.warn('[OpenList] 自动同步失败:', e?.message || e)
     })
@@ -7387,7 +7387,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         }
 
         if (req.method === 'GET') {
-          const olCfg = loadOpenlistConfig()
+          const olCfg = getOpenlistConfig()
           const config = {
             serverName: global.lx.config.serverName,
             'debug.enabled': global.lx.config['debug.enabled'] || false,
@@ -7491,7 +7491,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'openlist.syncInterval': olCfg.syncInterval,
             'openlist.userBackups': JSON.stringify(olCfg.userBackups),
             'openlist.includeNonAudio': olCfg.includeNonAudio,
-            'openlist.externalUrl': olCfg.externalUrl || olCfg.endpoint,
+            'openlist.externalUrl': olCfg.externalUrl,
             'openlist.backupSystemConfig': olCfg.backupSystemConfig,
             subsonicPortConflict: global.lx.subsonicPortConflict || null,
             configFilePath: global.lx.configPath || process.env.CONFIG_PATH || path.join(global.lx.dataPath, 'config.js'),
@@ -7784,7 +7784,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['subsonic.playCacheFirst'] !== undefined) global.lx.config['subsonic.playCacheFirst'] = newConfig['subsonic.playCacheFirst']
               if (newConfig['subsonic.playCacheFirstUseOpenlist'] !== undefined) global.lx.config['subsonic.playCacheFirstUseOpenlist'] = newConfig['subsonic.playCacheFirstUseOpenlist']
               if (newConfig['subsonic.openlistDelivery'] !== undefined) global.lx.config['subsonic.openlistDelivery'] = newConfig['subsonic.openlistDelivery']
-              const savedOlCfg = loadOpenlistConfig()
+              const savedOlCfg = getOpenlistConfig()
               if (hasOpenlistChange && savedOlCfg.enable) {
                 const raw = savedOlCfg.userBackups
                 let rules: any[] = Array.isArray(raw) ? raw : []
@@ -7847,7 +7847,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
 
               // 配置保存后：若启用 OpenList 同步，后台（防抖）触发一次同步
               startVerifyScheduler()
-              if (loadOpenlistConfig().enable) {
+              if (getOpenlistConfig().enable) {
                 scheduleOpenlistSync()
               }
 
@@ -7983,7 +7983,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         void readBody(req).then(async (body) => {
           try {
             const cfg = JSON.parse(body || '{}')
-            const current = loadOpenlistConfig()
+            const current = getOpenlistConfig()
             const endpoint = cfg.endpoint || current.endpoint || ''
             const username = cfg.username ?? (current.username || '')
             const password = cfg.password ?? (current.password || '')

@@ -15,7 +15,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { OpenListClient, OpenListNotFoundError } from './openlistClient'
-import { loadOpenlistConfig } from './openlistConfigDb'
+import { getOpenlistClient, getOpenlistConfig } from './openlistRuntime'
 import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir, getIndexItemByFilename } from '@/server/music/fileCache'
 import { callUserApiGetMusicUrl } from '@/server/sources/userApi'
 import { getUserDirname } from '@/user/data'
@@ -99,13 +99,8 @@ const AUDIO_EXT = ['mp3', 'flac', 'm4a', 'aac', 'ogg', 'wav', 'ape', 'opus', 'wm
 const NON_AUDIO_EXT = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'heic', 'avif', 'jpe', 'tif', 'tiff', 'lrc', 'txt']
 
 function getConfig(): BackupConfig {
-  // OpenList 配置以 SQLite 为准（openlist_config / openlist_user_backup）
-  const cfg = loadOpenlistConfig()
-  return {
-    ...cfg,
-    endpoint: normalizeTrailingSlash(cfg.endpoint),
-    externalUrl: normalizeTrailingSlash(cfg.externalUrl || cfg.endpoint),
-  }
+  // 统一走运行时门面（SQLite 为准，endpoint/externalUrl 已规范化）
+  return getOpenlistConfig()
 }
 
 /** 去掉结尾斜杠（兼容用户误填的 / 或 \），用于规范化 externalUrl */
@@ -163,8 +158,6 @@ function parseMod(e?: string): number | null {
   return Number.isNaN(t) ? null : t
 }
 
-let client: OpenListClient | null = null
-let clientSig = ''
 let verifyTimer: ReturnType<typeof setInterval> | null = null
 let verifyRunning = false
 let syncTimer: ReturnType<typeof setInterval> | null = null
@@ -198,20 +191,8 @@ function rowEnabled(row: any, cfg = getConfig()): boolean {
 }
 
 function getClient(): OpenListClient | null {
-  const cfg = getConfig()
-  if (!cfg.enable || !cfg.endpoint) { client = null; clientSig = ''; return null }
-  // 按配置签名缓存客户端：签名未变时复用，变化时才重建
-  const sig = [cfg.endpoint, cfg.username, cfg.password, cfg.token, cfg.root].join('|')
-  if (client && clientSig === sig) return client
-  client = new OpenListClient({
-    endpoint: cfg.endpoint,
-    username: cfg.username,
-    password: cfg.password,
-    token: cfg.token,
-    root: cfg.root,
-  })
-  clientSig = sig
-  return client
+  // 客户端实例与其缓存策略由运行时门面统一管理（按连接参数签名复用）
+  return getOpenlistClient()
 }
 
 /**
