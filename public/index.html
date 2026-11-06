@@ -2290,6 +2290,10 @@
                         <div class="header-left">
                             <h3>备份与恢复管理</h3>
                             <p class="text-secondary">集中管理系统配置文件历史备份与各用户歌单数据快照，保障数据安全与即时回滚。</p>
+                            <p class="text-secondary" style="margin-top:6px;color:var(--warning-color, #f59e0b);">
+                                OpenList 相关的业务数据（备份记录、附件索引与 OpenList 配置）保存在 SQLite 数据库文件
+                                <code>data/openlist-backup.db</code>，不在下方配置 / 快照备份范围内，需要另外单独备份；本项目暂不支持自动备份该数据库文件。
+                            </p>
                         </div>
                         <div class="backup-segmented-tabs glass">
                             <button type="button" class="backup-tab-btn active" id="tab-btn-config-backup"

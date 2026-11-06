@@ -34,16 +34,17 @@ import { initUserApis, callUserApiGetMusicUrl, isSourceSupported, getLoadedApis,
 import { startVerifyScheduler, runSyncNow, listBackups, retryBackup, deleteOpenlistBackups, registerFileCacheSyncHook, restoreOpenlistData, triggerBackfillUploadDelete } from '@/server/openlistBackup'
 import { BACKUP_TYPE_INFO, getBackupTypes, normalizeBackupTypes } from '@/utils/backupPolicy'
 import { OpenListClient } from '@/server/openlistClient'
+import { loadOpenlistConfig, saveOpenlistConfig } from '@/server/openlistConfigDb'
 
 async function validateOpenListConfig(newConfig: any): Promise<void> {
-  const c: any = global.lx.config
-  const enable = newConfig['openlist.enable'] !== undefined ? !!newConfig['openlist.enable'] : !!c['openlist.enable']
+  const current = loadOpenlistConfig()
+  const enable = newConfig['openlist.enable'] !== undefined ? !!newConfig['openlist.enable'] : current.enable
   if (!enable) return
-  const endpoint = newConfig['openlist.endpoint'] !== undefined ? newConfig['openlist.endpoint'] : (c['openlist.endpoint'] || '')
-  const username = newConfig['openlist.username'] !== undefined ? newConfig['openlist.username'] : (c['openlist.username'] || '')
-  const password = newConfig['openlist.password'] !== undefined ? newConfig['openlist.password'] : (c['openlist.password'] || '')
-  const token = newConfig['openlist.token'] !== undefined ? newConfig['openlist.token'] : (c['openlist.token'] || '')
-  const root = newConfig['openlist.root'] !== undefined ? newConfig['openlist.root'] : (c['openlist.root'] || '/lx_music')
+  const endpoint = newConfig['openlist.endpoint'] !== undefined ? newConfig['openlist.endpoint'] : (current.endpoint || '')
+  const username = newConfig['openlist.username'] !== undefined ? newConfig['openlist.username'] : (current.username || '')
+  const password = newConfig['openlist.password'] !== undefined ? newConfig['openlist.password'] : (current.password || '')
+  const token = newConfig['openlist.token'] !== undefined ? newConfig['openlist.token'] : (current.token || '')
+  const root = newConfig['openlist.root'] !== undefined ? newConfig['openlist.root'] : (current.root || '/lx_music')
   if (!endpoint) throw new Error('OpenList 地址(endpoint)不能为空')
   const cl = new OpenListClient({ endpoint, username, password, token, root })
   try {
@@ -51,12 +52,12 @@ async function validateOpenListConfig(newConfig: any): Promise<void> {
   } catch (e: any) {
     throw new Error('OpenList 账号校验失败：' + (e?.message || e))
   }
-  const rawUB = newConfig['openlist.userBackups'] !== undefined ? newConfig['openlist.userBackups'] : c['openlist.userBackups']
+  const rawUB = newConfig['openlist.userBackups'] !== undefined ? newConfig['openlist.userBackups'] : current.userBackups
   let ub: any[] = []
   if (rawUB) {
     try { ub = typeof rawUB === 'string' ? JSON.parse(rawUB) : rawUB } catch { ub = [] }
   }
-  const users: any[] = c.users || []
+  const users: any[] = (global.lx.config as any).users || []
   for (const e of ub) {
     if (!e || !e.enabled) continue
     if (!users.find((u: any) => u.name === e.user)) throw new Error(`OpenList 同步配置中的用户「${e.user}」不存在`)
@@ -74,7 +75,7 @@ function scheduleOpenlistSync(): void {
   if (pendingOpenlistSyncTimer) clearTimeout(pendingOpenlistSyncTimer)
   pendingOpenlistSyncTimer = setTimeout(() => {
     pendingOpenlistSyncTimer = null
-    if (!global.lx.config['openlist.enable']) return
+    if (!loadOpenlistConfig().enable) return
     void runSyncNow({}).catch((e: any) => {
       console.warn('[OpenList] 自动同步失败:', e?.message || e)
     })
@@ -7386,6 +7387,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         }
 
         if (req.method === 'GET') {
+          const olCfg = loadOpenlistConfig()
           const config = {
             serverName: global.lx.config.serverName,
             'debug.enabled': global.lx.config['debug.enabled'] || false,
@@ -7479,18 +7481,18 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'configBackup.scheduleTime': global.lx.config['configBackup.scheduleTime'] ?? '00:00',
             'configBackup.dir': global.lx.config['configBackup.dir'] ?? '',
             'snapshot.backupPath': global.lx.config['snapshot.backupPath'] ?? '',
-            'openlist.enable': global.lx.config['openlist.enable'] ?? false,
-            'openlist.endpoint': global.lx.config['openlist.endpoint'] || '',
-            'openlist.username': global.lx.config['openlist.username'] || '',
-            'openlist.password': global.lx.config['openlist.password'] || '',
-            'openlist.token': global.lx.config['openlist.token'] || '',
-            'openlist.root': global.lx.config['openlist.root'] || '/lx_music',
-            'openlist.verifyInterval': global.lx.config['openlist.verifyInterval'] || 5,
-            'openlist.syncInterval': global.lx.config['openlist.syncInterval'] || 60,
-            'openlist.userBackups': global.lx.config['openlist.userBackups'] || '[]',
-            'openlist.includeNonAudio': global.lx.config['openlist.includeNonAudio'] === true,
-            'openlist.externalUrl': global.lx.config['openlist.externalUrl'] || global.lx.config['openlist.endpoint'] || '',
-            'openlist.backupSystemConfig': global.lx.config['openlist.backupSystemConfig'] === true,
+            'openlist.enable': olCfg.enable,
+            'openlist.endpoint': olCfg.endpoint,
+            'openlist.username': olCfg.username,
+            'openlist.password': olCfg.password,
+            'openlist.token': olCfg.token,
+            'openlist.root': olCfg.root,
+            'openlist.verifyInterval': olCfg.verifyInterval,
+            'openlist.syncInterval': olCfg.syncInterval,
+            'openlist.userBackups': JSON.stringify(olCfg.userBackups),
+            'openlist.includeNonAudio': olCfg.includeNonAudio,
+            'openlist.externalUrl': olCfg.externalUrl || olCfg.endpoint,
+            'openlist.backupSystemConfig': olCfg.backupSystemConfig,
             subsonicPortConflict: global.lx.subsonicPortConflict || null,
             configFilePath: global.lx.configPath || process.env.CONFIG_PATH || path.join(global.lx.dataPath, 'config.js'),
           }
@@ -7671,18 +7673,39 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
                   warning = (warning ? warning + '；' : '') + 'OpenList 配置校验未通过（已保存，但同步可能因不可达而失败）：' + (ve?.message || ve)
                 }
               }
-              if (newConfig['openlist.enable'] !== undefined) global.lx.config['openlist.enable'] = newConfig['openlist.enable']
-              if (newConfig['openlist.endpoint'] !== undefined) global.lx.config['openlist.endpoint'] = newConfig['openlist.endpoint']
-              if (newConfig['openlist.username'] !== undefined) global.lx.config['openlist.username'] = newConfig['openlist.username']
-              if (newConfig['openlist.password'] !== undefined) global.lx.config['openlist.password'] = newConfig['openlist.password']
-              if (newConfig['openlist.token'] !== undefined) global.lx.config['openlist.token'] = newConfig['openlist.token']
-              if (newConfig['openlist.root'] !== undefined) global.lx.config['openlist.root'] = newConfig['openlist.root']
-              if (newConfig['openlist.verifyInterval'] !== undefined) global.lx.config['openlist.verifyInterval'] = parseInt(newConfig['openlist.verifyInterval']) || 5
-              if (newConfig['openlist.syncInterval'] !== undefined) global.lx.config['openlist.syncInterval'] = parseInt(newConfig['openlist.syncInterval']) || 60
-              if (newConfig['openlist.userBackups'] !== undefined) global.lx.config['openlist.userBackups'] = newConfig['openlist.userBackups']
-              if (newConfig['openlist.includeNonAudio'] !== undefined) global.lx.config['openlist.includeNonAudio'] = newConfig['openlist.includeNonAudio']
-              if (newConfig['openlist.externalUrl'] !== undefined) global.lx.config['openlist.externalUrl'] = String(newConfig['openlist.externalUrl']).replace(/[\\/]+$/, '')
-              if (newConfig['openlist.backupSystemConfig'] !== undefined) global.lx.config['openlist.backupSystemConfig'] = newConfig['openlist.backupSystemConfig']
+              // [OpenList 配置] 写入 SQLite（openlist_config / openlist_user_backup），不再进 config.js
+              if (hasOpenlistChange) {
+                const patch: any = {}
+                if (newConfig['openlist.enable'] !== undefined) patch.enable = !!newConfig['openlist.enable']
+                if (newConfig['openlist.endpoint'] !== undefined) patch.endpoint = String(newConfig['openlist.endpoint'] || '')
+                if (newConfig['openlist.username'] !== undefined) patch.username = String(newConfig['openlist.username'] || '')
+                if (newConfig['openlist.password'] !== undefined) patch.password = String(newConfig['openlist.password'] || '')
+                if (newConfig['openlist.token'] !== undefined) patch.token = String(newConfig['openlist.token'] || '')
+                if (newConfig['openlist.root'] !== undefined) patch.root = String(newConfig['openlist.root'] || '/lx_music')
+                if (newConfig['openlist.verifyInterval'] !== undefined) patch.verifyInterval = parseInt(newConfig['openlist.verifyInterval']) || 5
+                if (newConfig['openlist.syncInterval'] !== undefined) patch.syncInterval = parseInt(newConfig['openlist.syncInterval']) || 60
+                if (newConfig['openlist.userBackups'] !== undefined) {
+                  try {
+                    const arr = typeof newConfig['openlist.userBackups'] === 'string' ? JSON.parse(newConfig['openlist.userBackups']) : newConfig['openlist.userBackups']
+                    if (Array.isArray(arr)) {
+                      patch.userBackups = arr.filter((e: any) => e && e.user).map((e: any) => ({
+                        user: String(e.user),
+                        enabled: e.enabled !== false,
+                        backupDownload: e.backupDownload !== false,
+                        backupCache: e.backupCache !== false,
+                        backupSnapshot: e.backupSnapshot !== false,
+                        mode: e.mode || 'upload',
+                        downloadDir: e.downloadDir || undefined,
+                        cacheDir: e.cacheDir || undefined,
+                      }))
+                    }
+                  } catch { /* 非法 JSON 忽略 */ }
+                }
+                if (newConfig['openlist.includeNonAudio'] !== undefined) patch.includeNonAudio = !!newConfig['openlist.includeNonAudio']
+                if (newConfig['openlist.externalUrl'] !== undefined) patch.externalUrl = String(newConfig['openlist.externalUrl']).replace(/[\\/]+$/, '')
+                if (newConfig['openlist.backupSystemConfig'] !== undefined) patch.backupSystemConfig = !!newConfig['openlist.backupSystemConfig']
+                if (Object.keys(patch).length) saveOpenlistConfig(patch)
+              }
 
               if (newConfig['snapshot.backupPath'] !== undefined) {
                 try {
@@ -7761,10 +7784,10 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['subsonic.playCacheFirst'] !== undefined) global.lx.config['subsonic.playCacheFirst'] = newConfig['subsonic.playCacheFirst']
               if (newConfig['subsonic.playCacheFirstUseOpenlist'] !== undefined) global.lx.config['subsonic.playCacheFirstUseOpenlist'] = newConfig['subsonic.playCacheFirstUseOpenlist']
               if (newConfig['subsonic.openlistDelivery'] !== undefined) global.lx.config['subsonic.openlistDelivery'] = newConfig['subsonic.openlistDelivery']
-              if (hasOpenlistChange && global.lx.config['openlist.enable']) {
-                const raw = global.lx.config['openlist.userBackups']
-                let rules: any[] = []
-                try { rules = typeof raw === 'string' ? JSON.parse(raw) : raw || [] } catch { /* 校验警告已返回 */ }
+              const savedOlCfg = loadOpenlistConfig()
+              if (hasOpenlistChange && savedOlCfg.enable) {
+                const raw = savedOlCfg.userBackups
+                let rules: any[] = Array.isArray(raw) ? raw : []
                 const udRules = Array.isArray(rules) ? rules.filter(r => r?.enabled && (global.lx.config['backup.openlist.types'] === undefined || r.backupCache === true) && r.mode === 'upload-delete') : []
                 if (udRules.length) {
                   global.lx.config['subsonic.playCacheFirst'] = true
@@ -7824,7 +7847,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
 
               // 配置保存后：若启用 OpenList 同步，后台（防抖）触发一次同步
               startVerifyScheduler()
-              if (global.lx.config['openlist.enable']) {
+              if (loadOpenlistConfig().enable) {
                 scheduleOpenlistSync()
               }
 
@@ -7960,11 +7983,12 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
         void readBody(req).then(async (body) => {
           try {
             const cfg = JSON.parse(body || '{}')
-            const endpoint = cfg.endpoint || global.lx.config['openlist.endpoint'] || ''
-            const username = cfg.username ?? (global.lx.config['openlist.username'] || '')
-            const password = cfg.password ?? (global.lx.config['openlist.password'] || '')
-            const token = cfg.token ?? (global.lx.config['openlist.token'] || '')
-            const root = cfg.root || global.lx.config['openlist.root'] || '/lx_music'
+            const current = loadOpenlistConfig()
+            const endpoint = cfg.endpoint || current.endpoint || ''
+            const username = cfg.username ?? (current.username || '')
+            const password = cfg.password ?? (current.password || '')
+            const token = cfg.token ?? (current.token || '')
+            const root = cfg.root || current.root || '/lx_music'
             if (!endpoint) {
               res.writeHead(422, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify({ success: false, error: 'OpenList 地址不能为空' }))

@@ -283,8 +283,35 @@ const backupConfigNow = (): { success: boolean, filename?: string, error?: strin
   }
 }
 
-const saveConfigToFile = () => {
+/** 读取磁盘 config.js 当前的键集合（不修改内存配置） */
+const readExistingConfigKeys = (): string[] => {
+  try {
+    if (!global.lx.configPath || !fs.existsSync(global.lx.configPath)) return []
+    const resolved = require.resolve(global.lx.configPath)
+    delete require.cache[resolved]
+    const existing = require(global.lx.configPath)
+    return Object.keys(existing || {})
+  } catch {
+    return []
+  }
+}
+
+/** 对比磁盘 config.js 与内存配置的键集合，返回本次写回会丢失的键 */
+const findDroppedConfigKeys = (): string[] => {
+  const nextKeys = new Set(Object.keys(global.lx.config))
+  return readExistingConfigKeys().filter(key => !nextKeys.has(key))
+}
+
+const saveConfigToFile = (allowKeyDrop = false) => {
   const content = `module.exports = ${JSON.stringify(global.lx.config, null, 2)}`
+  // 写回前校验：已有 config.js 中的键不应在本次写回中消失，防止合并 / 迁移逻辑静默丢字段
+  const dropped = findDroppedConfigKeys()
+  if (dropped.length > 0) {
+    console.warn(`[Config] 写回配置将丢失以下键${allowKeyDrop ? '（已忽略）' : '，已阻止'}：${dropped.join(', ')}`)
+    if (!allowKeyDrop) {
+      throw new Error(`配置写回被阻止：将丢失 ${dropped.length} 个键（${dropped.slice(0, 5).join(', ')}）。如确认要删除这些配置，请手动编辑 config.js。`)
+    }
+  }
   const temporary = `${global.lx.configPath}.${process.pid}.${crypto.randomUUID()}.tmp`
   try {
     const targetDir = path.dirname(global.lx.configPath)
@@ -353,10 +380,11 @@ const margeConfig = (p: string) => {
     console.warn('Read config error: ' + (err.message as string))
     return false
   }
-  const newConfig = { ...global.lx.config }
-  for (const key of Object.keys(defaultConfig) as Array<keyof LX.Config>) {
-    // @ts-expect-error
-    if (config[key] !== undefined) newConfig[key] = config[key]
+  // 保留用户配置中的所有键（不再只按 defaultConfig 白名单合并）：
+  // 避免 defaultConfig 尚未收录的新键（如新增的 openlist.*）在加载 / 回写时被静默丢弃
+  const newConfig = { ...global.lx.config } as LX.Config
+  for (const key of Object.keys(config) as Array<keyof LX.Config>) {
+    if (config[key] !== undefined) (newConfig as any)[key] = config[key]
   }
 
   // [向后兼容] 旧版 Subsonic 独立端口靠 subsonic.port > 0 直接监听，无 standalone 开关概念。
@@ -947,8 +975,29 @@ if (!fs.existsSync(openLibDir)) {
   fs.mkdirSync(openLibDir, { recursive: true })
 }
 
+// OpenList 配置迁移到 SQLite：数据表已有记录时忽略 config.js 中的旧值
+let openlistKeysRemovedFromDisk = false
+try {
+  const { migrateOpenlistConfigFromLegacy, stripOpenlistKeysFromConfig } = require('./server/openlistConfigDb')
+  if (migrateOpenlistConfigFromLegacy(global.lx.config)) {
+    console.log('[Config] OpenList 配置已迁移到 SQLite（openlist_config / openlist_user_backup）')
+  }
+  // 只把「磁盘 config.js 中真实存在」的 openlist 键算作有意删除，其余键仍走严格校验
+  const diskKeys = new Set(readExistingConfigKeys())
+  const cleanedConfig = { ...global.lx.config }
+  const removedAll: string[] = stripOpenlistKeysFromConfig(cleanedConfig)
+  if (removedAll.length) global.lx.config = cleanedConfig
+  const removed = removedAll.filter(key => diskKeys.has(key))
+  if (removed.length) {
+    openlistKeysRemovedFromDisk = true
+    console.log(`[Config] 已从 config.js 移除 OpenList 键：${removed.join(', ')}`)
+  }
+} catch (e: any) {
+  console.warn('[Config] OpenList 配置迁移失败:', e?.message || e)
+}
+
 // 启动前最后保存一次合并后的配置，确保环境变量被固化到 config.js 中
-saveConfigToFile()
+saveConfigToFile(openlistKeysRemovedFromDisk)
 
 // 本地配置备份调度：每 N 小时一次，可选锚点时间（HH:MM）对齐到该时刻首次触发
 const getNextRunTime = (anchor: string, intervalMs: number, now: number): number => {

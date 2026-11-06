@@ -133,6 +133,8 @@ const config: LX.Config = {
   'system.allowUnsafeVM': false, // 是否允许运行 VM 模式自定义源脚本
 
   // ===== OpenList 备份/同步 =====
+  // 注意：OpenList 配置已迁移到 SQLite（src/server/openlistConfigDb.ts 的 openlist_config / openlist_user_backup），
+  // 运行时一律以数据库为准；以下键仅作为旧版 config.js 的迁移来源与默认值保留，启动迁移后会被从内存/配置文件中清除。
   'openlist.enable': false, // 是否启用 OpenList 备份/同步
   'openlist.endpoint': '', // OpenList 地址(如 http://127.0.0.1:5244)
   'openlist.username': '', // OpenList 管理员账号(用于 testConnection)

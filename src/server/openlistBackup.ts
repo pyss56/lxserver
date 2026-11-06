@@ -15,6 +15,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { OpenListClient, OpenListNotFoundError } from './openlistClient'
+import { loadOpenlistConfig } from './openlistConfigDb'
 import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir, getIndexItemByFilename } from '@/server/music/fileCache'
 import { callUserApiGetMusicUrl } from '@/server/sources/userApi'
 import { getUserDirname } from '@/user/data'
@@ -98,36 +99,12 @@ const AUDIO_EXT = ['mp3', 'flac', 'm4a', 'aac', 'ogg', 'wav', 'ape', 'opus', 'wm
 const NON_AUDIO_EXT = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'heic', 'avif', 'jpe', 'tif', 'tiff', 'lrc', 'txt']
 
 function getConfig(): BackupConfig {
-  const c: any = (globalThis as any).lx?.config || {}
+  // OpenList 配置以 SQLite 为准（openlist_config / openlist_user_backup）
+  const cfg = loadOpenlistConfig()
   return {
-    enable: !!c['openlist.enable'],
-    endpoint: normalizeTrailingSlash(c['openlist.endpoint'] || ''),
-    username: c['openlist.username'] || '',
-    password: c['openlist.password'] || '',
-    token: c['openlist.token'] || '',
-    root: c['openlist.root'] || '/lx_music',
-    verifyInterval: Number(c['openlist.verifyInterval'] || 5),
-    includeNonAudio: c['openlist.includeNonAudio'] === true,
-    syncInterval: Number(c['openlist.syncInterval'] || 60),
-    externalUrl: normalizeTrailingSlash(String(c['openlist.externalUrl'] || c['openlist.endpoint'] || '')),
-    backupSystemConfig: c['openlist.backupSystemConfig'] === true,
-    userBackups: parseUserBackups(c['openlist.userBackups']),
-  }
-}
-
-function parseUserBackups(raw: any): UserBackupCfg[] {
-  if (!raw) return []
-  try {
-    const arr = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (!Array.isArray(arr)) return []
-    // 兼容旧配置：openlist.keepLocalAfterUpload === false 时，未显式指定 mode 的条目迁移为 upload-delete
-    const legacyDelete = (globalThis as any).lx?.config?.['openlist.keepLocalAfterUpload'] === false
-    return (arr as UserBackupCfg[]).map(entry => {
-      if (legacyDelete && entry && !entry.mode) return { ...entry, mode: 'upload-delete' }
-      return entry
-    })
-  } catch {
-    return []
+    ...cfg,
+    endpoint: normalizeTrailingSlash(cfg.endpoint),
+    externalUrl: normalizeTrailingSlash(cfg.externalUrl || cfg.endpoint),
   }
 }
 

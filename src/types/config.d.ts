@@ -553,7 +553,9 @@ declare namespace LX {
     'system.allowUnsafeVM'?: boolean
 
     // ===== OpenList 备份/同步 =====
-    /** 是否启用 OpenList 备份/同步 */
+    // 已迁移到 SQLite（openlist_config / openlist_user_backup），以下键仅作为旧配置迁移来源；
+    // 运行时请使用 src/server/openlistConfigDb.ts 的 loadOpenlistConfig / saveOpenlistConfig。
+    /** 是否启用 OpenList 备份/同步（已迁移至 SQLite，仅迁移读取） */
     'openlist.enable'?: boolean
     /** OpenList 地址(如 http://127.0.0.1:5244) */
     'openlist.endpoint'?: string
