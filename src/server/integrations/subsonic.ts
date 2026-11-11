@@ -6574,7 +6574,17 @@ class SubsonicHandler {
                   return
                 }
                 const delivery = (global.lx.config['subsonic.openlistDelivery'] as string) || 'direct'
-                if (delivery === 'proxy') {
+                // sign：把网盘直链 / 带签名的 OpenList /d/ 地址交给客户端直连（省服务器出向带宽）。
+                // 部分客户端不跟随 302，故先做 Range 0-0 预检，明确不可读(401/403/404/HTML)才降级服务端代理，
+                // 避免出现「客户端拿到死链后每秒重试」的情况。预检超时按既有策略视为不可判定，仍交客户端尝试。
+                let deliveryProxy = delivery === 'proxy'
+                if (delivery === 'sign') {
+                    const probe = await probeAudioUrl(directUrl)
+                    deliveryProxy = probe === 'invalid'
+                    if (deliveryProxy) subsonicLog.warn(`[Subsonic] ${method} OpenList 直链预检失败，降级服务端代理: ${id}`)
+                    else subsonicLog.debug(`[Subsonic] ${method} OpenList sign delivery probe=${probe} for ${id}`)
+                }
+                if (deliveryProxy) {
                   try {
                     const fwd: Record<string, string> = {}
                     if (req.headers.range) fwd['Range'] = String(req.headers.range)

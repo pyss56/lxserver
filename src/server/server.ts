@@ -7613,6 +7613,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'openlist.userBackups': global.lx.config['openlist.userBackups'] || '[]',
             'openlist.includeNonAudio': global.lx.config['openlist.includeNonAudio'] === true,
             'openlist.externalUrl': global.lx.config['openlist.externalUrl'] || global.lx.config['openlist.endpoint'] || '',
+            'openlist.signExpireHours': global.lx.config['openlist.signExpireHours'] ?? 6,
             'openlist.backupSystemConfig': global.lx.config['openlist.backupSystemConfig'] === true,
             subsonicPortConflict: global.lx.subsonicPortConflict || null,
             restoreMaintenance: global.lx.restoreMaintenance === true,
@@ -7810,6 +7811,8 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['openlist.userBackups'] !== undefined) global.lx.config['openlist.userBackups'] = newConfig['openlist.userBackups']
               if (newConfig['openlist.includeNonAudio'] !== undefined) global.lx.config['openlist.includeNonAudio'] = newConfig['openlist.includeNonAudio']
               if (newConfig['openlist.externalUrl'] !== undefined) global.lx.config['openlist.externalUrl'] = String(newConfig['openlist.externalUrl']).replace(/[\\/]+$/, '')
+              // 0 允许（=不过期），上限 30 天，避免误填永久凭据
+              if (newConfig['openlist.signExpireHours'] !== undefined) global.lx.config['openlist.signExpireHours'] = Math.min(720, Math.max(0, Math.floor(Number(newConfig['openlist.signExpireHours']) || 0)))
               if (newConfig['openlist.backupSystemConfig'] !== undefined) global.lx.config['openlist.backupSystemConfig'] = newConfig['openlist.backupSystemConfig']
 
               if (newConfig['snapshot.backupPath'] !== undefined) {

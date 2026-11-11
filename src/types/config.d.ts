@@ -480,8 +480,8 @@ declare namespace LX {
     'subsonic.playCacheFirst'?: boolean
     /** 在「缓存优先」开启的前提下，是否优先使用 OpenList 备份：缓存未命中时若 OpenList 已有该文件，则把网盘/外网直链直接给客户端(省服务器出向流量)。默认 false */
     'subsonic.playCacheFirstUseOpenlist'?: boolean
-    /** OpenList 命中后的交付方式：'direct'=给直链(302 跳转，客户端直连网盘/OpenList，省服务器流量)；'proxy'=服务端代理转发(兼容不支持跳转的客户端)。默认 'direct' */
-    'subsonic.openlistDelivery'?: 'direct' | 'proxy'
+    /** OpenList 命中后的交付方式：'direct'=给直链(302 跳转，客户端直连网盘/OpenList，省服务器流量)；'proxy'=服务端代理转发(兼容不支持跳转的客户端)；'sign'=给带签名的 OpenList /d/ 直链(适用于没有网盘直链的驱动，预检失败自动降级 proxy)。默认 'direct' */
+    'subsonic.openlistDelivery'?: 'direct' | 'proxy' | 'sign'
 
     /**
      * Subsonic 服务端转码总开关 (默认 false)。开启后,当音源无客户端请求音质(及更低音质)时,
@@ -575,6 +575,8 @@ declare namespace LX {
     'openlist.includeNonAudio'?: boolean
     /** OpenList 外网可访问地址(默认同 openlist.endpoint)。用于把网盘/代理直链回传给客户端；填写时结尾可带或不带斜杠，后台规范化 */
     'openlist.externalUrl'?: string
+    /** OpenList /d/ 直链签名有效期(小时)，0 表示不过期。签名用站点令牌做 HMAC，令牌本身不会出现在 URL 里。默认 6 */
+    'openlist.signExpireHours'?: number
     /** 是否把系统配置(config.js)同步备份到 OpenList（全局开关，开启后每次同步会上传 config.js 到 <root>/_system/config.js） */
     'openlist.backupSystemConfig'?: boolean
   }

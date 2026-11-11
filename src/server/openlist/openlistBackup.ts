@@ -218,6 +218,8 @@ interface BackupConfig {
   syncInterval: number
   externalUrl: string
   backupSystemConfig: boolean
+  /** OpenList /d/ 直链签名的有效期(小时)，0 表示不过期 */
+  signExpireHours: number
   userBackups: UserBackupCfg[]
 }
 
@@ -238,6 +240,7 @@ function getConfig(): BackupConfig {
     syncInterval: Number(c['openlist.syncInterval'] || 60),
     externalUrl: normalizeTrailingSlash(String(c['openlist.externalUrl'] || c['openlist.endpoint'] || '')),
     backupSystemConfig: c['openlist.backupSystemConfig'] === true,
+    signExpireHours: Number(c['openlist.signExpireHours'] ?? 6),
     userBackups: parseUserBackups(c['openlist.userBackups']),
   }
 }
@@ -254,6 +257,33 @@ function parseUserBackups(raw: any): UserBackupCfg[] {
 
 /** 去掉结尾斜杠（兼容用户误填的 / 或 \），用于规范化 externalUrl */
 const normalizeTrailingSlash = (u: string) => u.replace(/[\\/]+$/, '')
+
+/**
+ * 生成 OpenList `/d/` 直链签名，与上游 internal/sign 的 HMACSign 完全一致：
+ *   sign = base64url(HMAC-SHA256(token, path + ":" + expire)) + ":" + expire
+ * - token 为站点「令牌」，不出现在 URL 里，只作为 HMAC 密钥；
+ * - path 必须带前导斜杠（上游按 FixAndCleanPath 后的路径校验，少斜杠会 sign invalid）；
+ * - expire=0 表示永不过期，否则是 unix 秒。
+ */
+export function signOpenlistPath(token: string, rawPath: string, expireAtSeconds: number): string {
+  const mac = crypto.createHmac('sha256', token).update(`${rawPath}:${expireAtSeconds}`).digest()
+  return `${mac.toString('base64').replace(/\+/g, '-').replace(/\//g, '_')}:${expireAtSeconds}`
+}
+
+/**
+ * 拼出带签名的 OpenList `/d/` 直链（用于「没有网盘直链」的驱动 / 交给客户端直连的场景）：
+ * 驱动支持直链时上游 302 到网盘，否则由 OpenList 自身代理流式返回，故对所有驱动都成立。
+ * 未配置 externalUrl/token 时返回 null，调用方继续走服务端代理或原始回源。
+ */
+export function buildSignedOpenlistDownUrl(base: string, remotePath: string, token: string, expireHours: number): string | null {
+  const root = normalizeTrailingSlash(base || '')
+  if (!root || !token) return null
+  const p = remotePath.startsWith('/') ? remotePath : `/${remotePath}`
+  const hours = Number(expireHours)
+  const expire = hours > 0 && Number.isFinite(hours) ? Math.floor(Date.now() / 1000) + Math.round(hours * 3600) : 0
+  const sign = signOpenlistPath(token, p, expire)
+  return `${root}/d${p.split('/').map((s) => encodeURIComponent(s)).join('/')}?sign=${encodeURIComponent(sign)}`
+}
 
 // 这些 folder_type 属于“应用运行规则/用户数据”（系统配置、歌单与不喜欢快照、统一模型用户数据）。
 // 它们的本地副本必须保留：OpenList 的“不保留本地(upload-delete)”对它们不生效，
@@ -829,10 +859,11 @@ export async function resolveOpenlistCacheEntry(
       if (info.size != null && row.size != null && info.size !== row.size) return null
       const filename = path.basename(row.remote_path)
       if (info?.rawUrl) return { url: info.rawUrl, filename, quality: row.quality || song?.quality || 'unknown' }
-      const base = normalizeTrailingSlash(cfg.externalUrl || cfg.endpoint || '')
-      if (!base) return null
-      const p = row.remote_path.replace(/^\/+/, '')
-      return { url: `${base}/d/${p.split('/').map((s: string) => encodeURIComponent(s)).join('/')}`, filename, quality: row.quality || song?.quality || 'unknown' }
+      // 无网盘直链的驱动（Local/WebDAV 等）只能用 OpenList 自己的 /d/：
+      // 站点开启「对所有直链签名」时，匿名请求会 401 expire missing，故必须带上 HMAC 签名。
+      const signed = buildSignedOpenlistDownUrl(cfg.externalUrl || cfg.endpoint || '', row.remote_path, cfg.token, cfg.signExpireHours)
+      if (!signed) return null
+      return { url: signed, filename, quality: row.quality || song?.quality || 'unknown' }
     })().catch(() => null)
     playbackLinks.set(key, { until: Date.now() + 30000, pending })
     return await waitPlaybackLink(pending, signal)

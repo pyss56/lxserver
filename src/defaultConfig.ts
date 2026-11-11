@@ -123,7 +123,7 @@ const config: LX.Config = {
   'subsonic.cacheOnPlay': false, // 是否在 Subsonic 播放时触发服务器缓存保存（落盘）
   'subsonic.playCacheFirst': false, // 是否在 Subsonic 播放时优先使用服务器已有的本地缓存/下载文件直接传输(默认关闭:避免服务器自担出向流量/代理字节)
   'subsonic.playCacheFirstUseOpenlist': false, // 在「缓存优先」开启时，是否优先使用 OpenList 备份并以直链交付客户端
-  'subsonic.openlistDelivery': 'direct', // OpenList 命中后交付方式：direct=给直链(302)，proxy=服务端代理转发
+  'subsonic.openlistDelivery': 'direct', // OpenList 命中后交付方式：direct=给直链(302)，proxy=服务端代理转发，sign=给带签名的 OpenList /d/ 直链(预检失败自动降级 proxy)
   'subsonic.quality.enabled': true, // 音质优选总开关: 按优先级主动选最优可用音质(非失败降级); 关闭则 stream 仅单次解析
   'subsonic.quality.priority': 'flac,320k,128k', // 音质优先级(从高到低, 逗号分隔), 按此顺序主动优选
   'subsonic.source.priority': 'kw,tx,wy,mg,kg', // 跨平台优选顺序(逗号分隔, 客户端所选源始终优先)
@@ -151,6 +151,7 @@ const config: LX.Config = {
   'openlist.userBackups': '[]', // 各用户备份目录配置(JSON 数组)
   'openlist.includeNonAudio': false, // 是否同步非音频文件(图片/封面等)
   'openlist.externalUrl': '', // OpenList 外网地址(留空则同 openlist.endpoint)
+  'openlist.signExpireHours': 6, // OpenList /d/ 直链签名有效期(小时)，0=不过期
   'openlist.backupSystemConfig': false, // 是否把系统配置(config.js)同步备份到 OpenList
 }
 
