@@ -1,4 +1,5 @@
-import { spawnSync } from 'child_process'
+import { spawnSync, execFile } from 'child_process'
+import { promisify } from 'node:util'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -106,7 +107,13 @@ export async function lookupSong(fingerprint: string, duration: number): Promise
  * 识别本地歌曲并返回格式化的结果
  */
 export async function identifyLocalSong(filePath: string) {
-    const { fingerprint, duration } = getFingerprint(filePath)
+    const binary = getFpcalcPath()
+    if (!binary) throw new Error('未找到 fpcalc 二进制文件')
+    // Background identification must not block HTTP progress requests.
+    const { stdout } = await promisify(execFile)(binary, ['-json', filePath], {
+        encoding: 'utf8', timeout: 25000, maxBuffer: 4 * 1024 * 1024, windowsHide: true,
+    })
+    const { fingerprint, duration } = JSON.parse(stdout)
     const data = await lookupSong(fingerprint, duration)
 
     if (!data.results || data.results.length === 0) {

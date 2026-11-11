@@ -1,7 +1,7 @@
-// 此文件中仅版本号为静态写死值
+// 版本号与构建指纹由 scripts/update-build-hash.js 从 package.json 和源码生成
 // 其余配置由服务端在运行时动态注入 (环境变量 > config.js > defaultConfig.ts)
-// 服务端拦截 /js/config.js 请求, 读取此处版本号并合并服务端配置后返回
+// 服务端拦截 /js/config.js 请求, 使用 package.json 版本号并合并服务端配置后返回
 window.CONFIG = {
-    buildHash: 'af5ec28',
-    version: 'v2.1.3.2',
+    buildHash: '04a6a9b',
+    version: 'v2.2.0',
 };

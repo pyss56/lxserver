@@ -6,10 +6,14 @@ LX Sync Server 提供了多种 RESTful 风格的 API 接口，用于自动化获
 
 为了确保安全性，API 要求进行鉴权。目前主要支持以下两种鉴权方式：
 
-1. **管理员鉴权 (`x-admin-auth`)**: 使用管理终端的全局口令（`admin.password`）。用于敏感的服务控制、用户管理及全局数据提取。
+1. **管理员鉴权 (`x-frontend-auth`)**: 使用管理终端的全局口令（`admin.password`）。用于敏感的服务控制、用户管理及全局数据提取。
 2. **用户 Token 鉴权 (`x-user-token`)**: 使用通过登录接口获取的动态 Session Token 或管理面板生成的持久化 API Token。用于操作特定用户的数据（如歌单、设置、缓存等）。
 
-所有接口如无特殊说明均**使用 JSON 作为请求体及响应体**类型 (`Content-Type: application/json`)。
+Web 播放器另有 `lx_player_session` Cookie，公开访问受播放器认证和公共权限配置控制。`x-user-name` 不能替代用户 Token；各路由的权限规则以其处理逻辑为准。
+
+多数数据接口使用 JSON。媒体返回二进制，进度订阅可能使用 SSE，部分成功或错误响应为纯文本；调用方应检查 HTTP 状态和 Content-Type。
+
+完整入口及直接读取的参数见 [当前路由索引](./routes.md)。
 
 ---
 
@@ -99,6 +103,46 @@ LX Sync Server 提供了多种 RESTful 风格的 API 接口，用于自动化获
 - `GET /api/music/tipSearch`: 搜索关键词联想提示。
 - `GET /api/music/hotSearch`: 各平台实时热搜榜单。
 
+#### 搜索参数与返回格式
+
+| 查询参数 | 说明 |
+| --- | --- |
+| `name` | 必填关键词，缺失返回 HTTP 400 文本 `Missing name` |
+| `source` | `kw`（默认）、`kg`、`tx`、`wy`、`mg`；聚合搜索由前端分别请求各源，不支持 `source=all` |
+| `type` | `song`（默认）、`singer`、`album`、`playlist`，支持情况取决于音源 |
+| `page` | 默认 1；歌曲搜索仅在显式传入正数 `limit` 时用于上游分页 |
+| `limit` | 歌曲：正数表示只取指定页，实际每页数量不超过该源上限；省略或非正数则从第一页连续拉取。其他类型默认每页 20 条 |
+
+```http
+GET /api/music/search?name=周杰伦&source=kw
+GET /api/music/search?name=周杰伦&source=kw&page=2&limit=20
+```
+
+成功响应为对象，**不是裸数组**，调用方读取 `data.list`。以下仅展示结构，歌曲字段因音源而异：
+
+```json
+{
+  "list": [],
+  "total": 100,
+  "allPage": 5,
+  "pageSize": 20,
+  "fetchedPages": 2,
+  "stopReason": "single-page",
+  "hasMore": true,
+  "source": "kw"
+}
+```
+
+- `total/allPage` 是平台自报值（缺失时后端回退计算），可能是估算值。实际收到的条数和本地分页应使用 `list.length`。
+- `fetchedPages` 实际记录最后取回的上游页码；单页请求第 2 页时值为 2，不表示本次请求取了两页。
+- 连续拉取在后续页请求前检查 60 页、4000 条、15 秒预算；条数和时间不是精确硬上限或 HTTP 超时。
+- `stopReason`：`all-pages`、`single-page`、`empty-page`、`repeat-page`、`page-cap`、`page-wall`、`item-budget`、`time-budget`。
+- `hasMore` 标识预算或页数墙等截断；单页模式仅按本页是否达到 `pageSize` 推断。空页、重复页或取完上游页数时为 false，不保证平台全部歌曲均已取到。
+- 歌手、专辑、歌单搜索返回 `list,total,allPage,pageSize,fetchedPages,source`，不含 `hasMore/stopReason`。
+- 不支持的音源/类型或第一页失败，返回 HTTP 500 与 `{ "error": "...", "code": 500 }`；后续页失败可能返回已有结果并标记 `page-wall`。
+
+`GET /api/music/tipSearch` 使用 `name,source` 参数，返回提示数组；缺少关键词或上游失败时返回 `[]`。
+
 ### 4.2 广场与榜单
 
 - `GET /api/music/songList/tags`: 获取歌单分类标签。
@@ -146,7 +190,7 @@ LX Sync Server 提供了多种 RESTful 风格的 API 接口，用于自动化获
 - `POST /api/music/custom/link`: 手动关联并重写音频 ID3 标签信息（要求用户开启 `allowWriteCustomMusicDir` 权限）。
 - `POST /api/music/custom/updateMetadata`: 批量抓取网上元数据并覆写本地文件（要求用户开启 `allowWriteCustomMusicDir` 权限）。
 - `POST /api/music/custom/embedLyric`: 批量将歌词写入本地文件 USLT 标签中（要求用户开启 `allowWriteCustomMusicDir` 权限）。
-- `POST /api/music/remaster/start`: 启动音频洗版与降级转码任务（若作用于自定义目录，要求用户开启 `allowOperateCustomMusicDir` 权限）。
+- `POST /api/music/remaster/start`: 启动音质替换下载任务（自定义目录要求 `allowOperateCustomMusicDir`）。`targetQuality` 与非空 `filenames` 数组必填，单次最多 10000 个文件；`isCustomDir` 用于明确目录类型。不是本地编码转码接口。
 
 ---
 
@@ -171,7 +215,7 @@ LX Sync Server 提供了多种 RESTful 风格的 API 接口，用于自动化获
   - **参数示例**: `{"admin.path": "/admin", "player.path": "", "subsonic.enableDebug": false}`
   - **路径校验规则**: `admin.path` 与 `player.path` 必须以 `/` 开头或为空字符串，两者不能冲突相同且不能以 `/api` 开头。
 - `POST /api/admin/reload`: 重新加载服务器 `config.js` 与 `users.json` 数据及用户自定义音源 API。
-- `POST /api/admin/restart`: 安全重启服务器进程。
+- `POST /api/restart`: 安全重启服务器进程。
 
 ---
 
@@ -191,9 +235,229 @@ LX Sync Server 提供了多种 RESTful 风格的 API 接口，用于自动化获
   - **Params**: `source` (tx/wy), `id` (歌手Mid/ID)。
   - **Return**: 含 `name`, `desc`, `avatar`, `fans` 等。
 - `GET /api/music/artistAlbums`: 分页获取歌手的专辑列表。
-- `GET /api/music/artistSongs`: 分页获取歌手的全部歌曲。
+- `GET /api/music/artistSongs`: 服务端连续拉取歌手歌曲并返回数组，受 `artist.maxFetchPages` 限制（默认 20 页，每页 100 条），不保证取满。
 - `GET /api/music/albumSongs`: 获取指定专辑内的所有音轨详情。
 
 ### 8.3 实时进度 (SSE)
 - `GET /api/music/progress?reqId=xxx`: 通过 Server-Sent Events (SSE) 实时订阅外链解析、缓存进度等流式信息。
 
+
+## 9. VueFinder 文件管理接口（管理员）
+
+当前处理器为 `src/server/integrations/fileManager.ts`，旧 ElFinder connector 以及 PUT/DELETE `/api/files` 调用方式已不适用。操作使用 `x-frontend-auth`；仅媒体 GET/HEAD 还可使用 `POST /api/files/session` 签发的一小时 HttpOnly `lx_files` Cookie，服务器重启后失效。
+
+使用虚拟路径：`root://` 为服务运行目录，`data://` 为数据目录，不接受主机绝对路径。
+
+| 方法 / 路径 | 参数 / 行为 |
+| --- | --- |
+| `POST /api/files/session` | 签发媒体 Cookie，返回存储列表与上传限制 |
+| `GET /api/files` | 查询 `path=root://`；返回 `storages,dirname,files,read_only` |
+| `GET /api/files/search` | 查询 `path,filter,deep=1,size=all/small/medium/large` |
+| `GET/HEAD /api/files/preview`, `GET/HEAD /api/files/download`, `GET/HEAD /api/files/thumbnail` | 查询 `path`；预览与下载支持 Range，缩略图返回 WebP |
+| `POST /api/files/upload` | multipart/form-data：`path`、文件、可选 `overwrite=1`；单文件上限 1 GiB |
+| `POST /api/files/create-file`, `POST /api/files/create-folder` | JSON path, name |
+| `POST /api/files/rename` | JSON path, item, name |
+| `POST /api/files/delete` | JSON path, items:[{path:"data://example.txt"}] |
+| `POST /api/files/copy`, `POST /api/files/move` | JSON destination, sources:["data://example.txt"] |
+| `POST /api/files/save` | JSON `path,content`；仅支持 8 MiB 内文本 |
+| `POST /api/files/archive` | JSON `destination`（或 `path`）、`name`、`items:[{path:"data://example.txt"}]`；创建 ZIP |
+| `POST /api/files/unarchive` | JSON `destination`（或 `path`）、`item`（ZIP 虚拟路径）；解压 ZIP |
+
+错误返回对应 HTTP 状态及 `{"message":"..."}`。
+
+## 10. 自动匹配与歌单排序
+
+- `POST /api/music/user/list/reorder`：用户 Token 鉴权；JSON `listId,orderedSongIds`，未列出的歌曲追加到末尾，成功返回文本。
+- `GET /api/music/auto-link/candidates?custom=true`：获取自定义目录候选；省略 custom 使用缓存目录。
+- `POST /api/music/auto-link/start`：JSON `keys,sources,custom,concurrency`；查询参数 `browseLocation` 指定本次浏览位置，自定义目录写入需要 `allowWriteCustomMusicDir`。
+- `GET /api/music/auto-link/status?offset=0&limit=200`、`POST /api/music/auto-link/cancel`：查看或取消自动匹配。
+- 自动匹配要求用户 Token；成功响应 `{ "success": true, "data": ... }`，业务错误返回 HTTP 400 与 `{ "success": false, "message": "..." }`。
+- 洗版另支持 `GET /api/music/remaster/status?offset=0&limit=200`、`POST /api/music/remaster/cancel`；启动参数为 `targetQuality,filenames,isCustomDir`。
+
+其余缓存、下载队列、同步下载、后台任务、备份与管理接口见 [当前路由索引](./routes.md)。
+
+## 11. 缓存目录、下载队列与后台任务
+
+缓存接口根据用户身份及公共缓存权限决定是否允许操作；不能把管理员鉴权头当作所有用户端点的通用凭据。
+
+| 接口 | 用途 / 主要参数 |
+| --- | --- |
+| `POST /api/music/cache/config` | 设置 `location`（root/data）和 `namingPattern`；具名用户需要身份验证，公共用户及全局命名配置受管理员权限约束 |
+| `GET /api/music/cache/directories` | 获取当前目录信息 |
+| `POST /api/music/cache/sync` | 重新扫描缓存索引 |
+| `GET /api/music/cache/subdirs` | 列出缓存子目录 |
+| `POST /api/music/cache/mkdir`、`POST /api/music/cache/categorize` | 创建子目录、分类移动 |
+| `POST /api/music/cache/subdirs/rename`、`POST /api/music/cache/subdirs/delete` | 子目录重命名、删除 |
+| `POST /api/music/cache/rename`、`POST /api/music/cache/move`、`POST /api/music/cache/switch-base` | 文件重命名、移动与存储位置切换 |
+| `GET /api/music/cache/check`、`GET /api/music/cache/cover` | 检查缓存、读取封面 |
+| `GET /api/music/cache/queue` | 获取服务端持久下载队列 |
+| `POST /api/music/cache/queue` | 入队：`tasks` 数组，可选 `concurrency,namingPattern`；全局命名修改需要管理员权限 |
+| `POST /api/music/cache/queue/concurrency` | 调整队列并发 |
+| `POST /api/music/cache/queue/resume`、`POST /api/music/cache/queue/remove` | 恢复或移除队列任务 |
+| `POST /api/music/cache/stop`、`GET /api/music/cache/progress` | 停止下载、查询进度 |
+| `GET /api/music/cache/lyric`、`POST /api/music/cache/lyric` | 读取、保存歌词缓存 |
+| `POST /api/music/cache/lyric/clear` | 清空歌词缓存 |
+| `GET /api/music/cache/lyric/orphans`、`POST /api/music/cache/lyric/orphans/delete` | 查找与删除孤立歌词 |
+| `POST /api/music/cache/link`、`POST /api/music/cache/updateMetadata` | 手动关联、更新元数据 |
+| `GET /api/music/cache/embedLyric`、`POST /api/music/cache/embedLyric` | 查看歌词嵌入状态、执行嵌入 |
+| `GET /api/music/custom/embedLyric` | 查看自定义目录歌词嵌入状态 |
+| `POST /api/music/identify` | 识别本地音频 |
+| `POST /api/music/quality/size` | 探测音质文件大小 |
+
+### 同步下载
+
+- `GET /api/user/sync-download/status`：同步状态及配置。
+- `PUT /api/user/sync-download/settings`：更新同步下载设置。
+- `POST /api/user/sync-download/trigger`：手动启动。
+- `POST /api/user/sync-download/cancel`、`POST /api/user/sync-download/pause`：取消或暂停。
+- `GET /api/user/sync-download/progress`：查询同步进度。
+- `POST /api/user/sync-download/migrate-storage`：迁移同步下载存储。
+
+### 定时任务
+
+- `GET /api/tasks/status`：任务状态，别名 `/api/music/tasks/status`。
+- `POST /api/tasks/trigger?id=network_list_autocheck`：手动触发；同步下载可使用 `id=sync_download_task`，别名 `/api/music/tasks/trigger`。
+- `GET /api/tasks/user-data?task=network_list_autocheck`：读取任务通知状态；POST 请求体 `listId` 清除指定歌单更新标记。
+- `GET /api/tasks/user-data?task=sync_download_task`：读取同步下载数据；POST 请求体 `{ "action": "trigger" }` 可触发同步。
+- user-data 另有 `/api/music/tasks/user-data` 别名。任务临时用户数据在重启后清除，不能作为持久化历史。
+
+## 12. 收藏、音源与运维补充
+
+- `GET/POST /api/user/library/artists`、`GET/POST /api/user/library/albums`：读取或覆盖收藏歌手、专辑。
+- `GET/POST /api/user/dislike/library/artists`、`GET/POST /api/user/dislike/library/albums`：读取或更新不喜欢的歌手、专辑。
+- `GET /api/music/dislike`、`POST /api/music/dislike/add`、`POST /api/music/dislike/remove`：读取、添加、删除不喜欢规则。
+- `GET /api/music/songList/search`、`GET /api/music/songList/userPlaylist`：搜索平台歌单、读取平台用户公开歌单。
+- `POST /api/custom-source/validate`、`POST /api/custom-source/update`、`POST /api/custom-source/update-platforms`：验证、更新源脚本及平台映射。
+- `POST /api/login`、`POST /api/admin/verify`：验证管理员密码；不替代后续操作所需的鉴权头。
+- `GET /api/config/backups`、`POST /api/config/backup-now`、`GET /api/config/backups/download`、`DELETE /api/config/backups/<filename>`、`POST /api/config/backups/restore`：配置备份管理。
+- `POST /api/config/test-proxy`：测试代理；`GET /api/logs`、`GET /api/stats`：日志与统计。
+- `GET /api/backup/download`、`POST /api/backup/upload`：导出、导入数据备份。
+- `POST /api/webdav/test`、`POST /api/webdav/sync`、`POST /api/webdav/sync-file`：测试连接、完整同步、单文件同步。
+- `POST /api/webdav/backup`、`GET /api/webdav/backups`、`DELETE /api/webdav/backup`、`POST /api/webdav/restore`：远程备份管理。
+- `GET /api/webdav/logs`、`GET /api/webdav/progress`：同步日志与 SSE 进度。
+
+### 评分与不喜欢联动 {#rating-api}
+
+| 方法 / 路径 | 认证 | 请求与返回要点 |
+| --- | --- | --- |
+| `GET /api/music/ratings` | 用户认证 | 返回 `version,pending,ratings,origins,songs`，只读取当前账号 |
+| `POST /api/music/ratings` | 用户认证 | 默认写入 `song` 与整数 `rating`（0–5，0 清除）；返回保存结果，可带 `warning`，警告不代表评分未保存 |
+| `GET /api/music/rating-preferences` | 用户认证 | 返回 `dislikeAutoRating`，默认 false |
+| `POST /api/music/rating-preferences` | 用户认证 | JSON `dislikeAutoRating` 必须是布尔值；保存后返回设置 |
+| `GET /api/data/rating-sync?user=<账号>` | 管理员认证 | 返回该账号的 `pending,version` |
+| `POST /api/data/rating-sync?user=<账号>` | 管理员认证 | 重试该账号待处理的评分同步任务 |
+| `POST /api/subsonic/sync-link` | 管理员认证 | JSON `user,direction,preview,reconcile`，执行或预览评分与不喜欢规则同步 |
+
+`POST /api/music/ratings` 也接受 `operation`：`version` 查询版本，`retryFailed` 重试任务，`exportBackup` 导出评分备份，`resolve` 批量解析最多 100 个 `songs`，可用 `includeDetails=true` 请求详情。各操作的响应结构不同，不统一包装为 `success`。
+
+`sync-link` 的 `direction` 必须为 `ratingToDislike` 或 `dislikeToRating`，前者要求启用并保存 `subsonic.linkRatingToDislike`。建议显式使用 `preview:true` 检查候选，再明确执行：普通同步仅在 `preview===true` 时预览；`ratingToDislike` 且 `reconcile:true` 时默认预览，只有 `preview:false` 执行。该端点的 HTTP 400 错误体可为纯文本，不能假定为 JSON。
+
+### OpenList 连接状态 {#openlist-connection}
+
+`GET /api/openlist/connection` 使用管理员认证，读取已记录的连接状态；`POST` 使用已保存配置主动探测。成功返回 `{ success: true, connection }`。POST 探测在线时还会在后台触发待检查记录核验，不是无副作用的查询。连接状态与历史文件内容校验结果是不同维度；探测失败返回 HTTP 500 与 `error`，其他方法返回 405。
+
+### 仪表盘概览 {#dashboard-overview}
+`GET /api/dashboard/overview` 使用 `x-frontend-auth: <管理员密码>`，无需查询参数，认证失败返回 HTTP 401。成功响应为 JSON，并设置 `Cache-Control: no-store`。
+
+| 响应字段 | 含义 |
+| --- | --- |
+| `success` | 成功时为 `true` |
+| `logs.totals` | 最近 24 小时窗口内的 `info`、`warn`、`error` 计数 |
+| `logs.buckets` | 最近 12 个滚动小时桶，含毫秒时间戳 `t` 与各级别计数 |
+| `logs.recent` | 最多 8 条近期警告/错误，按新到旧返回；含 `time`、`level`、`msg`，消息最多 200 字符 |
+| `disk` | 数据目录所在文件系统的 `total`、`free`，单位字节；无法读取时为 `null` |
+| `heap` | `used` 为进程 RSS，`total` 为系统总内存，`external` 为进程外部内存，均为字节；并非 V8 堆使用量与堆上限 |
+| `services` | WebDAV、OpenList、公共收藏的启用配置，以及恢复维护状态；不是远端连通性检查 |
+| `node`、`pid` | Node.js 版本与进程 ID |
+
+日志只读取 `app.log` 末尾最多 512 KiB 后按时间筛选，不读取轮转文件。高日志量时统计可能不覆盖完整 24 小时；日志不可读取或格式不匹配时，可返回空统计，不能据此判断没有发生错误。小时桶按请求时刻向前滚动，不对齐整点。
+
+Subsonic 的协议范围与本地库行为另见 [本地音乐库说明](../guide/subsonic-local-library.md) 和 [协议支持](./subsonic.md)。
+
+## 备份与恢复接口 {#backup-api}
+
+本节用于脚本集成；后台操作步骤见 [备份与恢复](../guide/backup-recovery.md)。这些管理接口使用 `x-frontend-auth: <管理员密码>`，JSON 请求使用 `Content-Type: application/json`。用户 Token 不能代替管理员密码。不要只按 HTTP 200 判断成功，还要检查 `success`、`errors` 及各接口的 `message`/`error`。
+
+### 本地导入导出与配置历史
+
+| 方法 / 路径 | 请求与返回要点 |
+| --- | --- |
+| `GET /api/backup/download` | 返回 ZIP；使用已保存的 WebDAV 类型范围，无需启用 WebDAV，不是无条件全目录导出 |
+| `POST /api/backup/upload` | multipart 文件字段 `backup`（也兼容 `file`）；按当前范围恢复本地 ZIP，不使用下面的 WebDAV 预览 token |
+| `GET /api/config/backups` | `success,list,autoBackupEnabled,retentionDays,intervalHours,scheduleTime,nextBackupAt,lastBackupAt`；时间为毫秒时间戳，0 表示暂无 |
+| `POST /api/config/backup-now` | 立即保存配置副本，返回 `success,filename`，失败可返回 `error` |
+| `GET /api/config/backups/download?file=<文件名>` | 下载指定配置副本 |
+| `POST /api/config/backups/restore` | JSON `fileName`；恢复配置历史，不等同于数据 ZIP 恢复 |
+| `DELETE /api/config/backups/<文件名>` | 删除指定本地配置副本 |
+
+### WebDAV
+
+| 方法 / 路径 | 请求与行为 |
+| --- | --- |
+| `POST /api/webdav/test` | 使用已保存配置，只检查目录读取；返回 `success,message,checks`，不验证写入/删除能力 |
+| `POST /api/webdav/sync` | 上传所选类型的本地文件，不做双向合并 |
+| `POST /api/webdav/backup` | JSON 可选 `force`，默认 `false`；创建并上传 ZIP |
+| `GET /api/webdav/backups` | 返回 `success,backups`；条目含 `filename,basename,size,time,timeStr` |
+| `DELETE /api/webdav/backup` | JSON `filename`，必须位于配置的 ZIP 目录；不是查询参数 `file` |
+| `POST /api/webdav/restore` | 先预览，再使用返回的 token 确认，详见下例 |
+| `GET /api/webdav/restore/tasks` | 返回 `success,tasks`；含状态、下载/写入数量、错误与 `canRollback` |
+| `POST /api/webdav/restore/tasks/<id>/rollback` | 回退保留的恢复前副本；拒绝覆盖恢复后的新修改 |
+| `DELETE /api/webdav/restore/tasks/<id>` | 删除本地任务及副本，不删除云端备份；运行中/待故障处理任务拒绝删除 |
+| `GET /api/webdav/logs` | 同步日志 |
+| `GET /api/webdav/progress` | SSE；也支持查询参数 `auth`，避免在可分享链接中携带凭据 |
+
+预览请求：
+
+```json
+{
+  "preview": true,
+  "mode": "files",
+  "strategy": "missing",
+  "keepCopies": true
+}
+```
+
+- `mode`：`files`（增量目录）、`zip`、`auto`（默认，目录无所选文件或不存在时尝试 ZIP）。
+- `targetFilename`：ZIP 模式下可指定备份列表中的文件名，省略选择最新 ZIP。
+- `strategy`：`missing`（仅补缺失）或 `overwrite`（覆盖同名）；API 默认 **overwrite**，不要省略后误以为是仅补缺失。
+- `keepCopies`：默认 `true`，保留恢复前副本。
+- 返回包含 `success,token,source,total,added,overwritten,merged,skipped,bytes,warnings,files`。`bytes` 是计划写入文件的字节数；ZIP 预览需要下载完整压缩包，不应将此值当作预览流量。
+
+确认时仅发送 `{"token":"预览返回值"}`；取消发送 `{"cancel":true,"token":"预览返回值"}`。预览有效期 15 分钟，配置或本地文件变化需重新预览。执行返回包含 `success,taskId,restored,backupDir,errors,restartRequired,message`（失败早于创建任务时部分字段不存在）。手动恢复需要维护状态与重启；跨文件提交不是文件系统原子事务。
+
+`POST /api/webdav/sync-file` 是单文件兼容入口，JSON 为 `path,action`，`action` 为 `upload` 或 `download`。它不具备整批恢复的预览、事务及回退记录；常规恢复应使用上述预览流程。
+
+### OpenList
+
+| 方法 / 路径 | 请求与行为 |
+| --- | --- |
+| `POST /api/openlist/test` | 可传 `endpoint,username,password,token,root`，未传使用已保存配置；只读测试，不保存 |
+| `POST /api/openlist/sync` | 可选 `user,folder`；备份并执行已启用用户缓存规则，返回 `success,summary` |
+| `GET /api/openlist/backups` | 返回 `success,list`；常规上传状态不等于完整内容校验结果 |
+| `GET /api/openlist/metadata` | 当前轻量检查任务、当前连接的主文件记录数量 |
+| `POST /api/openlist/metadata/start` | JSON `target` 为 `local`、`remote` 或 `both`；可传非空整数数组 `ids`，省略时检查当前连接全部记录。后台只读检查元信息，不传输正文、不删除文件 |
+| `POST /api/openlist/metadata/cancel` | 停止轻量检查，保留已完成观察结果 |
+| `POST /api/openlist/retry` | JSON `id` |
+| `POST /api/openlist/retry-batch` | JSON `ids` |
+| `POST /api/openlist/delete` | JSON `ids`；显式删除操作可能删除远端文件，返回 `deleted,remoteRemoved,remoteFailed` |
+| `GET /api/openlist/restore/history` | 可恢复的云端历史版本 |
+| `POST /api/openlist/restore` | 扫描预览：`preview:true,mode,types,backupBeforeRestore,snapshotId`；返回 `planToken` 及数量、文件清单、警告 |
+| `POST /api/openlist/restore/jobs/start` | 提交相同恢复参数和 `planToken`，返回 `success,taskId`，任务后台运行 |
+| `GET /api/openlist/restore/jobs` | 恢复任务列表及 `maintenance` 状态 |
+| `POST /api/openlist/restore/jobs/<id>/cancel` | 停止任务 |
+| `POST /api/openlist/restore/jobs/<id>/resume` | 继续可恢复任务；提交中断需先处理回退 |
+| `POST /api/openlist/restore/jobs/<id>/rollback` | 回退本次恢复，返回 `restartRequired` |
+| `DELETE /api/openlist/restore/jobs/<id>` | 删除任务与本地副本 |
+| `POST /api/openlist/integrity/preview` | JSON 可选 `type,user,scope`；scope 为 `changed`（默认）、`all` 或 `problems`，返回 `token,total,bytes,unknown` |
+| `POST /api/openlist/integrity/start` | JSON `token`，启动手动内容校验 |
+| `GET /api/openlist/integrity` | 当前校验任务和结果 |
+| `POST /api/openlist/integrity/cancel` | 停止内容校验 |
+
+OpenList 恢复的 `mode` 是 `missing` 或 `overwrite`（默认），与 WebDAV 的来源 `mode` 含义不同。`types` 可选，使用五类数据标识；未传使用已保存范围。`snapshotId` 省略恢复当前备份，指定时使用历史版本；`backupBeforeRestore` 默认 `true`。WebDAV 的 `token`、OpenList 恢复的 `planToken`、内容校验的 `token` 互不通用。
+
+维护期间可读取状态/配置及访问恢复管理、回退和重启入口；普通业务接口可能返回 503。重启后再继续备份或播放。内容校验可能下载文件正文，`bytes` 为最大正文读取估算，`unknown` 为缺少上传指纹的文件数；校验不会自动修复文件。
+
+
+### 备份概览状态
+
+`GET /api/backup/status` 使用 `x-frontend-auth` 鉴权。返回 `success,maintenance,webdav,openlist`，未启用的服务返回 null。WebDAV 包含 `running,restoring,nextSyncAt,nextZipAt,lastActivity,lastError`；OpenList 包含 `running,checking,nextSyncAt,nextCheckAt,counts,lastRun,lastRecordAt,lastError`。时间为毫秒时间戳，0 表示未安排。下一次时间是调度检查时间，不保证届时一定传输文件。运行结果摘要在进程重启后重新记录，持久化文件记录与整轮执行结果分开呈现。此接口不读取云端文件正文；未启用的服务在界面隐藏详情与执行按钮。

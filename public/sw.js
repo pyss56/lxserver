@@ -1,8 +1,12 @@
-const CACHE_NAME = 'lx-sync-server-v3';
+const CACHE_NAME = 'lx-sync-server-v5';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
     './style.css',
+    './css/tokens.css',
+    './css/dashboard.css',
+    './theme.js',
+    './dash.js',
     './app.js',
     './js/ui-utils.js',
     './js/notification-engine.js',
@@ -70,7 +74,7 @@ self.addEventListener('activate', (event) => {
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames.map((cacheName) => {
-                    if (cacheName !== CACHE_NAME) {
+                    if (cacheName.startsWith('lx-sync-server-') && cacheName !== CACHE_NAME) {
                         return caches.delete(cacheName);
                     }
                 })

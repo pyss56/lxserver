@@ -209,7 +209,8 @@ export class ListDataManage {
     // const targetItem = list[position]
     const map = new Map<string, LX.List.UserListInfo>()
     for (const item of newUserLists) map.set(item.id, item)
-    for (const id of ids) {
+    for (const id of new Set(ids)) {
+      if (!map.has(id)) continue
       const listInfo = map.get(id) as LX.List.UserListInfo
       listInfo.locationUpdateTime = Date.now()
       updateLists.push(listInfo)
@@ -322,7 +323,8 @@ export class ListDataManage {
     const infos: LX.Music.MusicInfo[] = []
     const map = new Map<string, LX.Music.MusicInfo>()
     for (const item of targetList) map.set(item.id, item)
-    for (const id of ids) {
+    for (const id of new Set(ids)) {
+      if (!map.has(id)) continue
       infos.push(map.get(id) as LX.Music.MusicInfo)
       map.delete(id)
     }

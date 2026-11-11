@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import * as fileCache from '../fileCache'
+import * as fileCache from '../music/fileCache'
 import { syncLog } from '@/utils/log4js'
 import { getUserSpace } from '@/user'
 import { File } from '@/constants'
@@ -751,7 +751,7 @@ export const downloadSongToSubPath = async (
       }
 
       const songKey = songId + '_' + finalQuality
-      const prog = fileCache.cacheProgress.get(songKey)
+      const prog = fileCache.cacheProgress.get(fileCache.getProgressKey(songKey, username))
       return prog?.status === 'exists' ? 'exists' : 'ok'
     }
 
@@ -819,7 +819,7 @@ export const downloadSongToSubPath = async (
     }
 
     const songKey = songId + '_' + finalQuality
-    const prog = fileCache.cacheProgress.get(songKey)
+    const prog = fileCache.cacheProgress.get(fileCache.getProgressKey(songKey, username))
     return prog?.status === 'exists' ? 'exists' : 'ok'
 
   } catch (e: any) {

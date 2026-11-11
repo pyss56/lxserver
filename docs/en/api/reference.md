@@ -12,7 +12,7 @@ To ensure security, server endpoints enforce different authentication mechanisms
    - Header: `x-frontend-auth: <Admin Password>`
    - Uses the master administrator password (`admin.password`). Required for global configurations, user administration, file manager, WebDAV backup/restore, and server process restarts.
 2. **User Token Authentication (`x-user-token`)**:
-   - Header: `x-user-token: <Token>` or Query string: `?token=<Token>` for stream endpoints.
+   - Header: `x-user-token: <Token>`. Query-token support is endpoint-specific, not a general substitute.
    - Uses a session token issued upon login or a persistent API token. Used for operating user-specific playlists, favorite libraries, dislike rules, cache management, and sound effects.
 3. **Web Player Cookie Authentication (`lx_player_session`)**:
    - Uses an HttpOnly `lx_player_session` cookie for independent web player access control.
@@ -131,7 +131,7 @@ Used for managing persistent API Tokens for third-party scripts and clients. Req
 
 ### 4.1 Search & Leaderboards
 - **`GET /api/music/search`**: Search songs across platforms (`kw`, `kg`, `tx`, `wy`, `mg`).
-- **`GET /api/music/tipSearch`**: Search keyword suggestions (`?source=...&text=...`).
+- **`GET /api/music/tipSearch`**: Search keyword suggestions (`?source=...&name=...`).
 - **`GET /api/music/hotSearch`**: Real-time hot search keywords from online platforms.
 - **`GET /api/music/songList/tags`**: Get playlist category tags.
 - **`GET /api/music/songList/list`**: Get curated playlists by tag.
@@ -140,6 +140,32 @@ Used for managing persistent API Tokens for third-party scripts and clients. Req
 - **`GET /api/music/songList/userPlaylist`**: Get user public playlists from platforms.
 - **`GET /api/music/leaderboard/boards`**: Get leaderboard categories.
 - **`GET /api/music/leaderboard/list`**: Get songs inside a leaderboard.
+
+
+#### Search parameters and response
+
+| Query | Meaning |
+| --- | --- |
+| `name` | Required keyword; missing value returns HTTP 400 plain text `Missing name` |
+| `source` | `kw` (default), `kg`, `tx`, `wy`, `mg`; aggregation uses separate frontend requests, not `source=all` |
+| `type` | `song` (default), `singer`, `album`, `playlist`; support varies by source |
+| `page` | Default 1; songs use it only with an explicit positive `limit` |
+| `limit` | Positive: one song page, capped at source page size. Omitted/non-positive: serial fetching from page 1. Other types default to 20 per page |
+
+Success is an **object**, not an array. Read `data.list`:
+
+```json
+{"list": [], "total": 100, "allPage": 5, "pageSize": 20, "fetchedPages": 2, "stopReason": "single-page", "hasMore": true, "source": "kw"}
+```
+
+- `total/allPage` are upstream values with computed fallbacks and may be estimates; use `list.length` for received count and local pagination.
+- `fetchedPages` is the last fetched upstream page number, not the request count.
+- Serial fetching checks budgets of 60 pages, 4000 items and 15 seconds before subsequent requests; these are not strict item or HTTP timeout guarantees.
+- `stopReason`: `all-pages`, `single-page`, `empty-page`, `repeat-page`, `page-cap`, `page-wall`, `item-budget`, `time-budget`.
+- `hasMore` indicates truncation; single-page mode only checks whether the page reached `pageSize`. False after empty/repeated/final pages does not prove all platform tracks were accessible.
+- Singer/album/playlist responses have `list,total,allPage,pageSize,fetchedPages,source`, without `hasMore/stopReason`.
+- Unsupported sources/types or first-page failures return HTTP 500 with `{"error":"...","code":500}`. Later-page failures may return partial results with `page-wall`.
+- Tip search accepts `name,source` and returns an array (`[]` on missing keyword/upstream failure).
 
 ### 4.2 Audio URL Resolution & Streaming
 - **`POST /api/music/url`**: Resolve audio direct URL (supports quality fallback and multi-source matching).
@@ -153,7 +179,7 @@ Used for managing persistent API Tokens for third-party scripts and clients. Req
 ### 4.3 Enhanced Metadata Details
 - **`GET /api/music/artistDetail`**: Rich artist profile, follower count, and HD artwork.
 - **`GET /api/music/artistAlbums`**: Paged albums of an artist.
-- **`GET /api/music/artistSongs`**: Paged songs of an artist.
+- **`GET /api/music/artistSongs`**: Fetch songs serially as an array, bounded by artist.maxFetchPages (default 20 pages, 100 tracks per page).
 - **`GET /api/music/albumSongs`**: Get all tracks inside an album.
 
 ---
@@ -215,7 +241,7 @@ Used for managing persistent API Tokens for third-party scripts and clients. Req
 - **`GET /api/music/custom/embedLyric` / `POST /api/music/custom/embedLyric`**: Embed lyrics into local files.
 
 ### 6.2 Remaster & Quality Upgrade (`/api/music/remaster/*`)
-- **`POST /api/music/remaster/start`**: Start remaster queue (downloads higher quality lossless files to replace lower bitrates).
+- **`POST /api/music/remaster/start`**: Start quality-replacement download queue: required targetQuality and nonempty filenames (up to 10000), optional isCustomDir. Custom-directory operations require allowOperateCustomMusicDir. This is not a local encoding/transcode endpoint.
 - **`GET /api/music/remaster/status`**: Get remaster task status and progress.
 - **`POST /api/music/remaster/cancel`**: Cancel active remaster queue.
 
@@ -258,10 +284,30 @@ Used for managing persistent API Tokens for third-party scripts and clients. Req
 - **`POST /api/config`**: Incrementally update configuration items (ports, paths, subsonic behaviors, proxy settings).
 - **`POST /api/config/test-proxy`**: Test proxy server connectivity.
 - **`POST /api/admin/reload`**: Hot reload `config.js`, `users.json`, and user script sources.
-- **`POST /api/restart`** (alias `/api/admin/restart`): Safely restart server process.
+- **`POST /api/restart`**: Safely restart server process.
 - **`GET /api/logs`**: Read access and error logs.
 - **`GET /api/stats`**: Performance and memory usage statistics.
 - **`POST /api/utils/check-dir`**: Validate if a local directory exists and is accessible.
+
+#### Dashboard overview {#dashboard-overview}
+
+
+`GET /api/dashboard/overview` requires `x-frontend-auth: <administrator-password>` and no query parameters. Invalid authentication returns HTTP 401. Successful responses are JSON with `Cache-Control: no-store`.
+
+| Response field | Meaning |
+| --- | --- |
+| `success` | `true` on success |
+| `logs.totals` | `info`, `warn` and `error` counts within the last 24-hour window |
+| `logs.buckets` | Twelve rolling hourly buckets with millisecond timestamp `t` and per-level counts |
+| `logs.recent` | Up to eight recent warnings/errors, newest first, with `time`, `level` and `msg`; messages are limited to 200 characters |
+| `disk` | `total` and `free` bytes on the data directory's filesystem, or `null` when unavailable |
+| `heap` | `used` is process RSS, `total` is system memory and `external` is process external memory, all in bytes; these are not V8 heap usage and heap limits |
+| `services` | WebDAV, OpenList and public-favorites enablement settings, plus restore-maintenance state; not remote connectivity checks |
+| `node`, `pid` | Node.js version and process ID |
+
+Logs are filtered by time after reading at most the last 512 KiB of `app.log`; rotated files are not read. High log volume may prevent full 24-hour coverage. Unreadable or unrecognized logs can produce empty statistics, which do not establish the absence of errors. Buckets roll back from request time rather than aligning to clock hours.
+
+See [Subsonic local music library](../guide/subsonic-local-library.md) and [protocol support](./subsonic.md) for Subsonic behavior and coverage.
 
 ### 9.2 Local Config Backups
 - **`GET /api/config/backups`**: List configuration snapshots.
@@ -269,26 +315,43 @@ Used for managing persistent API Tokens for third-party scripts and clients. Req
 - **`GET /api/config/backups/download?file=<name>`**: Download backup archive.
 - **`DELETE /api/config/backups/<fileName>`**: Delete config backup.
 - **`POST /api/config/backups/restore`**: Restore configuration snapshot.
-- **`GET /api/backup/download`**: Export full user data backup.
+- **`GET /api/backup/download`**: Export ZIP using the saved WebDAV scope.
 - **`POST /api/backup/upload`**: Import and restore user data backup.
 
 ### 9.3 WebDAV Cloud Sync & Remote Backups
 - **`POST /api/webdav/test`**: Test WebDAV connection and credentials.
-- **`POST /api/webdav/sync`**: Trigger full bidirectional WebDAV sync.
+- **`POST /api/webdav/sync`**: Upload local files within the selected scope.
 - **`POST /api/webdav/sync-file`**: Sync single file to WebDAV.
 - **`POST /api/webdav/backup`**: Create remote WebDAV backup archive.
 - **`GET /api/webdav/backups`**: List backups stored on WebDAV.
-- **`DELETE /api/webdav/backup`**: Delete remote backup (`?file=...`).
+- **`DELETE /api/webdav/backup`**: Delete remote backup (JSON `filename`).
 - **`POST /api/webdav/restore`**: Restore data from WebDAV backup.
 - **`GET /api/webdav/logs`**: Get WebDAV synchronization logs.
 - **`GET /api/webdav/progress`**: **SSE streaming endpoint**, real-time sync progress.
 
-### 9.4 File Manager API (ElFinder Connector)
-- **`GET /api/elfinder/connector` / `POST /api/elfinder/connector`**: Backend connector for ElFinder web file manager.
-- **`GET /api/files`**: List files in data directory.
-- **`GET /api/files/download`**: Download files from data directory.
-- **`POST /api/files` / `PUT /api/files`**: Upload or update files.
-- **`DELETE /api/files`**: Delete files.
+### 9.4 File Manager API (VueFinder RemoteDriver)
+
+The active handler is `src/server/integrations/fileManager.ts`. The former ElFinder connector and PUT/DELETE `/api/files` contract are obsolete. Use `x-frontend-auth`. Only media GET/HEAD can alternatively use the one-hour HttpOnly `lx_files` cookie issued by `POST /api/files/session`; restart invalidates it.
+
+Virtual paths: `root://` is the process working directory; `data://` is the data directory.
+
+| Method / path | Fields / behavior |
+| --- | --- |
+| `POST /api/files/session` | Issue media cookie; return storages and upload limit |
+| `GET /api/files` | Query `path=root://`; return storages, dirname, files, read_only |
+| `GET /api/files/search` | Query path, filter, deep=1, size=all/small/medium/large |
+| `GET/HEAD /api/files/preview`, `GET/HEAD /api/files/download`, `GET/HEAD /api/files/thumbnail` | Query path; preview/download support Range; thumbnail returns WebP |
+| `POST /api/files/upload` | Multipart path, files, optional overwrite=1; 1 GiB per file |
+| `POST /api/files/create-file`, `POST /api/files/create-folder` | JSON path, name |
+| `POST /api/files/rename` | JSON path, item, name |
+| `POST /api/files/delete` | JSON path, items:[{path:"data://example.txt"}] |
+| `POST /api/files/copy`, `POST /api/files/move` | JSON destination, sources:["data://example.txt"] |
+| `POST /api/files/save` | JSON path, content; text up to 8 MiB |
+| `POST /api/files/archive` | JSON destination (or path), name, items:[{path:"data://example.txt"}]; create ZIP |
+| `POST /api/files/unarchive` | JSON destination (or path), item (ZIP virtual path); extract ZIP |
+
+Errors return `{"message":"..."}` with the corresponding HTTP status.
+
 
 ---
 
@@ -306,3 +369,101 @@ Used for managing persistent API Tokens for third-party scripts and clients. Req
 - **`GET /id`** (or `/<username>/id`): Get server unique ID (`ServerId`).
 - **`POST /ah`** (or `/<username>/ah`): Auth negotiation and client pairing.
 - **`WebSocket Upgrade (WS)`**: Client upgrades HTTP connection to WebSocket Server for encrypted real-time sync.
+
+## 11. Additional task APIs and route index
+
+- `POST /api/music/user/list/reorder`: user token; JSON listId, orderedSongIds. Unlisted songs are appended; success is plain text.
+- `GET /api/music/auto-link/candidates?custom=true`: matching candidates; omit custom for cache.
+- `POST /api/music/auto-link/start`: JSON keys, sources, custom, concurrency; optional query browseLocation. Custom writes require allowWriteCustomMusicDir.
+- `GET /api/music/auto-link/status?offset=0&limit=200`, `POST /api/music/auto-link/cancel`: inspect/cancel matching.
+- Auto-link requires user token; success: `{"success":true,"data":...}`; business errors: HTTP 400, `{"success":false,"message":"..."}`.
+
+See the [current route index](./routes.md) for all route entries and directly read fields.
+
+## Backup and recovery API {#backup-api}
+
+For scripting; see [Backup and recovery](../guide/backup-recovery.md) for UI instructions. Admin requests use `x-frontend-auth: <admin password>` and JSON requests use `Content-Type: application/json`. User tokens do not replace admin authentication. Check `success`, `errors` and endpoint-specific `message`/`error`, not only HTTP 200.
+
+### Local archives and configuration history
+
+| Method / path | Contract |
+| --- | --- |
+| `GET /api/backup/download` | ZIP using the saved WebDAV scope; no enabled WebDAV required; not an unconditional full-directory export |
+| `POST /api/backup/upload` | Multipart field `backup` (also accepts `file`); restores local ZIP with current scope, without the WebDAV preview token |
+| `GET /api/config/backups` | `success,list,autoBackupEnabled,retentionDays,intervalHours,scheduleTime,nextBackupAt,lastBackupAt`; timestamps are milliseconds, 0 means unavailable |
+| `POST /api/config/backup-now` | Create config copy; `success,filename`, or `error` on failure |
+| `GET /api/config/backups/download?file=<name>` | Download a configuration copy |
+| `POST /api/config/backups/restore` | JSON `fileName`; config history restoration differs from data ZIP restoration |
+| `DELETE /api/config/backups/<name>` | Delete a local configuration copy |
+
+### WebDAV
+
+| Method / path | Contract |
+| --- | --- |
+| `POST /api/webdav/test` | Read-only directory checks with saved settings; returns `success,message,checks`, not proof of write/delete permissions |
+| `POST /api/webdav/sync` | Upload selected local types, not bidirectional merging |
+| `POST /api/webdav/backup` | Optional JSON `force`, default false; create/upload ZIP |
+| `GET /api/webdav/backups` | `success,backups`, entries: `filename,basename,size,time,timeStr` |
+| `DELETE /api/webdav/backup` | JSON `filename` within configured ZIP directory, not query `file` |
+| `POST /api/webdav/restore` | Preview, then confirm with returned token; example below |
+| `GET /api/webdav/restore/tasks` | `success,tasks`: state, downloaded/applied counts, errors and `canRollback` |
+| `POST /api/webdav/restore/tasks/<id>/rollback` | Restore retained pre-restore copies; rejects subsequent local changes |
+| `DELETE /api/webdav/restore/tasks/<id>` | Delete local task/copies, not cloud backups; running/unresolved tasks cannot be deleted |
+| `GET /api/webdav/logs` | Sync logs |
+| `GET /api/webdav/progress` | SSE; also accepts query `auth`, which should not be exposed in shared links |
+
+Preview request:
+
+```json
+{
+  "preview": true,
+  "mode": "files",
+  "strategy": "missing",
+  "keepCopies": true
+}
+```
+
+- `mode`: `files` (incremental directory), `zip`, or `auto` (default; ZIP fallback only for missing directory/no selected files).
+- `targetFilename`: optional ZIP filename from the backup list; omitted selects latest ZIP.
+- `strategy`: `missing` or `overwrite`; API default is **overwrite**, not missing-only.
+- `keepCopies`: defaults to true.
+- Response includes `success,token,source,total,added,overwritten,merged,skipped,bytes,warnings,files`. `bytes` counts planned write bytes; ZIP preview downloads the complete compressed archive, so this is not its preview transfer estimate.
+
+Confirm with `{"token":"returned-value"}` or cancel with `{"cancel":true,"token":"returned-value"}`. Plans expire after 15 minutes; configuration or local-file changes require a new preview. Execution returns `success,taskId,restored,backupDir,errors,restartRequired,message`; early failures may omit task fields. Manual restore enters maintenance mode and requires restart. Multi-file commit is not a filesystem atomic transaction.
+
+`POST /api/webdav/sync-file` is a legacy single-file endpoint with JSON `path,action`; action is `upload` or `download`. It does not provide batch preview, transaction or rollback records. Prefer the preview flow for recovery.
+
+### OpenList
+
+| Method / path | Contract |
+| --- | --- |
+| `POST /api/openlist/test` | Optional `endpoint,username,password,token,root`, falling back to saved values; read-only, does not save |
+| `POST /api/openlist/sync` | Optional `user,folder`; backup and enabled user-cache rules, returns `success,summary` |
+| `GET /api/openlist/backups` | `success,list`; upload status is separate from content verification |
+| `GET /api/openlist/metadata` | Current metadata job and count of primary records for this connection |
+| `POST /api/openlist/metadata/start` | JSON `target`: `local`, `remote`, `both`; optional nonempty integer `ids` array, omitted for all current-connection records. Starts a background read-only metadata check |
+| `POST /api/openlist/metadata/cancel` | Stop the metadata check; completed observations remain saved |
+| `POST /api/openlist/retry` | JSON `id` |
+| `POST /api/openlist/retry-batch` | JSON `ids` |
+| `POST /api/openlist/delete` | JSON `ids`; explicit deletion may remove remote files; returns `deleted,remoteRemoved,remoteFailed` |
+| `GET /api/openlist/restore/history` | Available recovery versions |
+| `POST /api/openlist/restore` | Preview with `preview:true,mode,types,backupBeforeRestore,snapshotId`; returns `planToken`, counts, files and warnings |
+| `POST /api/openlist/restore/jobs/start` | Same restore parameters plus `planToken`; returns `success,taskId`, runs in background |
+| `GET /api/openlist/restore/jobs` | Tasks and `maintenance` state |
+| `POST /api/openlist/restore/jobs/<id>/cancel` | Stop task |
+| `POST /api/openlist/restore/jobs/<id>/resume` | Continue an eligible task; interrupted commit needs rollback handling first |
+| `POST /api/openlist/restore/jobs/<id>/rollback` | Roll back, returning `restartRequired` |
+| `DELETE /api/openlist/restore/jobs/<id>` | Delete task/local copies |
+| `POST /api/openlist/integrity/preview` | Optional JSON `type,user,scope`: scope `changed` (default), `all`, `problems`; returns `token,total,bytes,unknown` |
+| `POST /api/openlist/integrity/start` | JSON `token`, start manual content verification |
+| `GET /api/openlist/integrity` | Current job and results |
+| `POST /api/openlist/integrity/cancel` | Stop verification |
+
+OpenList restore `mode` is `missing` or `overwrite` (default), unlike WebDAV's source-mode field. Optional `types` uses the five scope identifiers, defaulting to saved types. Omit `snapshotId` for current backup or supply a historical version. `backupBeforeRestore` defaults to true. WebDAV tokens, OpenList restore `planToken` and integrity tokens are not interchangeable.
+
+Maintenance allows status/config reads, recovery management, rollback and restart; ordinary business APIs may return 503. Resume backup/playback after restart. Verification may read full remote bodies: `bytes` is the maximum body-read estimate and `unknown` counts unavailable upload fingerprints. Verification does not automatically repair files.
+
+
+### Backup overview status
+
+`GET /api/backup/status` requires `x-frontend-auth`. Returns `success,maintenance,webdav,openlist`; disabled providers return null. WebDAV exposes `running,restoring,nextSyncAt,nextZipAt,lastActivity,lastError`. OpenList exposes `running,checking,nextSyncAt,nextCheckAt,counts,lastRun,lastRecordAt,lastError`. Times are milliseconds; 0 means no scheduled run. Next times indicate scheduler checks, not guaranteed transfers. Runtime summaries reset at process restart; persistent file records are separate. No cloud file bodies are read. The UI hides details and execution actions for disabled services.

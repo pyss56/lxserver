@@ -51,25 +51,36 @@ function getDirectoryHash(dir, exclude = [], extensions = []) {
 }
 
 const targetDir = path.resolve(__dirname, '../');
+const packageVersion = JSON.parse(fs.readFileSync(path.join(targetDir, 'package.json'), 'utf8')).version;
+if (typeof packageVersion !== 'string' || !packageVersion.trim()) {
+    throw new Error('package.json must contain a version');
+}
+const version = 'v' + packageVersion.trim().replace(/^v/i, '');
 
 // We exclude config.js/about.md itself to avoid infinite hash changes when injecting the hash.
 // Also ignore logs, data, server (dist), node_modules, .git.
 const publicHash = getDirectoryHash(path.join(targetDir, 'public'), ['js/config.js', 'about.md', 'music/about.md', 'music/bin'], []);
 const srcHash = getDirectoryHash(path.join(targetDir, 'src'), [], []);
 
-const finalHash = crypto.createHash('md5').update(publicHash + srcHash).digest('hex').substring(0, 7);
+const finalHash = crypto.createHash('md5').update(version + publicHash + srcHash).digest('hex').substring(0, 7);
 
 // Update config.js
 const configPath = path.join(targetDir, 'public', 'js', 'config.js');
 if (fs.existsSync(configPath)) {
     let configContent = fs.readFileSync(configPath, 'utf8');
 
-    if (configContent.includes('buildHash:')) {
-        configContent = configContent.replace(/buildHash:\s*['"][a-f0-9]+['"]/, `buildHash: '${finalHash}'`);
+    if (/\bversion['"]?\s*:/.test(configContent)) {
+        configContent = configContent.replace(/(\bversion['"]?\s*:)\s*['"][^'"]*['"]/, `$1 '${version}'`);
+    } else {
+        configContent = configContent.replace(/(window\.CONFIG\s*=\s*\{)/, `$1\n    version: '${version}',`);
+    }
+
+    if (/\bbuildHash['"]?\s*:/.test(configContent)) {
+        configContent = configContent.replace(/(\bbuildHash['"]?\s*:)\s*['"][^'"]*['"]/, `$1 '${finalHash}'`);
     } else {
         configContent = configContent.replace(/(window\.CONFIG\s*=\s*\{)/, `$1\n    buildHash: '${finalHash}',`);
     }
 
     fs.writeFileSync(configPath, configContent);
-    console.log(`Build hash updated to ${finalHash} in config.js`);
+    console.log(`Build info updated to ${version} (${finalHash}) in config.js`);
 }

@@ -46,48 +46,15 @@ declare namespace LX {
      * 是否启用此用户自动下载歌曲功能（允许该用户将歌单内容自动同步下载至本地数据目录）
      */
     enableAutoDownload?: boolean
+
+    /**
+     * 是否禁用此用户（禁用后禁止Web登录及同步服务）
+     */
+    disabled?: boolean
   }
 
   interface UserConfig extends User {
     dataPath: string
-  }
-
-  interface OpenlistUserBackup {
-    /**
-     * 用户名（对应 LX.Config.users 中的 name）
-     */
-    user: string
-    /**
-     * 是否对该用户开启音频备份
-     */
-    enabled: boolean
-    /**
-     * 是否备份该用户的下载(音乐)目录，默认 true；
-     * 备份路径由后端自动拼接该用户 dataPath/music，无需手动填写
-     */
-    backupDownload?: boolean
-    /**
-     * 是否备份该用户的缓存目录，默认 true；
-     * 备份路径由后端自动拼接该用户 dataPath/cache，无需手动填写
-     */
-    backupCache?: boolean
-    /**
-     * @deprecated 旧版手动填写的下载目录绝对路径，仅作向后兼容；新版以 backupDownload 开关为准
-     */
-    downloadDir?: string
-    /**
-     * @deprecated 旧版手动填写的缓存目录绝对路径，仅作向后兼容；新版以 backupCache 开关为准
-     */
-    cacheDir?: string
-    /**
-     * 同步模式（按用户 + 目录独立设置）：
-     *  - upload        ：仅上传本地新增到 OpenList，保留本地
-     *  - upload-delete ：上传后删除本地文件并清理缓存索引
-     *  - download      ：仅把 OpenList 该用户目录文件拉到本地，并补齐缓存
-     *  - sync          ：双向同步（本地新增上传 / 远端新增下载 / 删除双向检测 / mtime 冲突）
-     * 缺省由 openlist.keepLocalAfterUpload 推导（true→upload，false→upload-delete）
-     */
-    mode?: 'upload' | 'upload-delete' | 'download' | 'sync'
   }
 
   interface Config {
@@ -206,6 +173,10 @@ declare namespace LX {
      * 是否启用 WebDAV 同步服务
      */
     'webdav.enable'?: boolean
+    'backup.webdav.types'?: Array<'music' | 'userFiles' | 'snapshots' | 'userData' | 'system'>
+    'backup.openlist.types'?: Array<'music' | 'userFiles' | 'snapshots' | 'userData' | 'system'>
+    'backup.webdav.mirrorDeletes'?: boolean
+    'backup.webdav.restoreOnStartup'?: boolean
 
     /**
      * WebDAV URL
@@ -230,6 +201,8 @@ declare namespace LX {
     /**
      * WebDAV 全量备份远端路径（默认 /lx-sync-backups）
      */
+    'webdav.retentionCount'?: number
+    'webdav.retentionDays'?: number
     'webdav.backupPath'?: string
 
     /**
@@ -253,61 +226,6 @@ declare namespace LX {
     'webdav.excludeMusic'?: boolean
 
     /**
-     * 是否启用 OpenList 音频文件备份
-     */
-    'openlist.enable'?: boolean
-
-    /**
-     * OpenList 服务地址，例如 http://127.0.0.1:5244
-     */
-    'openlist.endpoint'?: string
-
-    /**
-     * OpenList 账号
-     */
-    'openlist.username'?: string
-
-    /**
-     * OpenList 密码
-     */
-    'openlist.password'?: string
-
-    /**
-     * OpenList 预置令牌（优先于账号密码）
-     */
-    'openlist.token'?: string
-
-    /**
-     * OpenList 内备份根目录（不含域名），默认 /lx_music。可为实例挂载名或自建目录（如 /tyCloud/lx_music）
-     */
-    'openlist.root'?: string
-
-    /**
-     * 上传完成后是否保留本地文件，默认 true（保留）
-     */
-    'openlist.keepLocalAfterUpload'?: boolean
-
-    /**
-     * 是否一并备份下载/缓存目录中的图片等非音频文件，默认 false
-     */
-    'openlist.includeNonAudio'?: boolean
-
-    /**
-     * 验证轮询间隔（分钟），默认 5：轮询 openlist 确认文件已落库后标记为 verified
-     */
-    'openlist.verifyInterval'?: number
-
-    /**
-     * 同步/下载定时触发间隔（分钟），预留配置项；当前仅支持手动触发（UI 按钮），定时未启用
-     */
-    'openlist.syncInterval'?: number
-
-    /**
-     * 每个用户各自的备份目录配置（JSON 数组，由前端管理），结构见 OpenlistUserBackup
-     */
-    'openlist.userBackups'?: string
-
-    /**
      * 是否启用本地配置备份（每日一份 config.js 副本，保留指定天数）
      */
     'configBackup.enable'?: boolean
@@ -321,6 +239,18 @@ declare namespace LX {
      * 本地配置备份目录，留空则使用 <data>/backups；相对路径基于 data 目录，绝对路径直接使用
      */
     'configBackup.dir'?: string
+
+    /**
+     * 本地配置自动备份周期（小时），默认 24；留空或非法值回退为 24
+     */
+    'configBackup.intervalHours'?: number
+
+    /**
+     * 本地配置自动备份锚点时间（HH:MM），默认 00:00（即每天 0 点）。
+     * 若设置，则在该时刻首次触发，之后每 intervalHours 小时循环；
+     * 留空（或清除）则从保存配置/启动时起每 intervalHours 小时触发
+     */
+    'configBackup.scheduleTime'?: string
 
     /**
      * 歌单快照额外备份路径（留空则存于用户数据目录 list/snapshot）。
@@ -435,6 +365,9 @@ declare namespace LX {
     /**
      * 是否在 Subsonic 中公开在线排行榜(只读虚拟播放列表) (默认 false)
      */
+    'subsonic.localPlaylist'?: boolean
+    'subsonic.customPlaylist'?: boolean
+    'subsonic.cachePlaylist'?: boolean
     'subsonic.publicLeaderboards'?: boolean
 
     /**
@@ -462,12 +395,16 @@ declare namespace LX {
      */
     'subsonic.linkRatingToDislike'?: boolean
 
+
+
     /**
-     * 解耦开关(反向): 不喜欢 -> 评星 是否自动联动 (默认 false)
-     * true 时, 网页端 / Subsonic 给某歌点「不喜欢」会回写该用户 subsonic-meta.json 的 ratings 映射(低星),
-     * 使 Subsonic 客户端能看到这颗星; false 时, 「不喜欢」仅写入原生 dislike 规则, 不回写评星, 与评星解耦。
+     * 是否向 Subsonic 客户端暴露 1~5 星评星歌单 (默认 true)
+     * 虚拟只读歌单(不落盘、不影响 LX 客户端「我的歌单」)：id 为 rating_1 ~ rating_5。
+     * rating_1 承载「我不喜欢」：除 1 星歌曲外并入 dislike 规则命中的歌曲，无真实评分时显示 1 星；
+     * 仅控制显示；自动联动分别受对应开关控制，仅补充缺失数据，
+     * 便于只能用评星操作的 Subsonic 客户端通过 1 星查找并处理不喜欢。
      */
-    'subsonic.linkDislikeToRating'?: boolean
+    'subsonic.ratingPlaylists'?: boolean
 
     /**
      * Subsonic 列表中是否隐藏 dislike 命中的歌曲 (默认 true)
@@ -537,21 +474,20 @@ declare namespace LX {
     'subsonic.cacheOnPlay'?: boolean
 
     /**
-     * 是否在 Subsonic 播放音乐时优先使用本地缓存/下载文件直接流式传输 (默认 true)
-     * 开启后,若服务器该用户目录下已存在此歌曲的缓存或下载文件,直接传输本地流,避免向源站请求在线直链
+     * 是否在 Subsonic 播放音乐时优先使用本地缓存/下载文件直接流式传输 (默认 false)
+     * 开启后,若服务器该用户目录下已存在此歌曲的缓存或下载文件,直接传输本地流,避免向源站请求在线直链;默认关闭以免服务器自担出向流量
      */
     'subsonic.playCacheFirst'?: boolean
+    /** 在「缓存优先」开启的前提下，是否优先使用 OpenList 备份：缓存未命中时若 OpenList 已有该文件，则把网盘/外网直链直接给客户端(省服务器出向流量)。默认 false */
+    'subsonic.playCacheFirstUseOpenlist'?: boolean
+    /** OpenList 命中后的交付方式：'direct'=给直链(302 跳转，客户端直连网盘/OpenList，省服务器流量)；'proxy'=服务端代理转发(兼容不支持跳转的客户端)。默认 'direct' */
+    'subsonic.openlistDelivery'?: 'direct' | 'proxy'
 
     /**
      * Subsonic 服务端转码总开关 (默认 false)。开启后,当音源无客户端请求音质(及更低音质)时,
      * 服务端拉取最高可用音质并经 ffmpeg 降码率后流式发给客户端,节省客户端流量(需服务端安装 ffmpeg)。
      */
     'subsonic.transcode.enabled'?: boolean
-
-    /**
-     * 仅当音源缺失对应低音质时才转码 (默认 true)。关闭则退回 302 直链原行为,永不转码。
-     */
-    'subsonic.transcode.onQualityMiss'?: boolean
 
     /**
      * 转码目标容器格式 (默认 'mp3'),可选 mp3 | opus | aac。
@@ -577,11 +513,6 @@ declare namespace LX {
      * 逐源音质优先级覆盖, 如 'subsonic.quality.sources.kw.priority': ['flac','320k']。存在时优先于全局 priority。
      */
     'subsonic.quality.sources'?: Record<string, string[]>
-
-    /**
-     * 客户端 maxBitrate 上界模式: 'hard' 只选 ≤ 上限的最高优先级音质; 'soft' 上限内都取不到时再突破上限选更高优先级。
-     */
-    'subsonic.quality.clientCapMode'?: 'hard' | 'soft'
 
     /**
      * 跨平台优选顺序(逗号分隔), 默认 'kw,tx,wy,mg,kg'。客户端所选源始终优先, 其余按此顺序优选。
@@ -618,5 +549,33 @@ declare namespace LX {
      * 是否允许运行 VM 模式自定义源脚本
      */
     'system.allowUnsafeVM'?: boolean
+
+    // ===== OpenList 备份/同步 =====
+    /** 是否启用 OpenList 备份/同步 */
+    'openlist.playback.enable'?: boolean
+    'openlist.enable'?: boolean
+    /** OpenList 地址(如 http://127.0.0.1:5244) */
+    'openlist.endpoint'?: string
+    /** OpenList 管理员账号(用于 testConnection) */
+    'openlist.username'?: string
+    /** OpenList 密码 */
+    'openlist.password'?: string
+    /** OpenList 用户令牌(与账号密码二选一) */
+    'openlist.token'?: string
+    /** OpenList 中 lx-music 备份根目录 */
+    'openlist.root'?: string
+    /** 远端可用性校验周期(分钟) */
+    'openlist.verifyInterval'?: number
+    /** 双向同步周期(分钟) */
+    'openlist.syncInterval'?: number
+    'openlist.historyRetentionDays'?: number
+    /** 各用户备份目录配置(JSON 数组) */
+    'openlist.userBackups'?: string
+    /** 是否同步非音频文件(图片/封面等) */
+    'openlist.includeNonAudio'?: boolean
+    /** OpenList 外网可访问地址(默认同 openlist.endpoint)。用于把网盘/代理直链回传给客户端；填写时结尾可带或不带斜杠，后台规范化 */
+    'openlist.externalUrl'?: string
+    /** 是否把系统配置(config.js)同步备份到 OpenList（全局开关，开启后每次同步会上传 config.js 到 <root>/_system/config.js） */
+    'openlist.backupSystemConfig'?: boolean
   }
 }

@@ -1,4 +1,5 @@
-const CACHE_NAME = 'lx-music-web-v26';
+const CACHE_NAME = 'lx-music-web-v65';
+// Refresh cached assets after organizing JavaScript modules by feature.
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -6,42 +7,48 @@ const ASSETS_TO_CACHE = [
     './app.js',
     // CSS
     './css/theme_variables.css',
+    './css/utilities.css',
+    './css/app.css',
+    './js/library/search_requests.js',
+    './js/library/paged_music_search.js',
+    './js/library/search_suggestions.js',
+    './js/ui/ui_accessibility.js',
     './assets/fontawesome/css/all.min.css',
     // 核心 JS
-    './js/lyric-parser.js',
-    './js/lyric-utils.js',
-    './js/lyric-card.js',
-    './js/quality.js',
-    './js/idb_store.js',
-    './js/user_sync.js',
-    './js/batch_pagination.js',
-    './js/single_song_ops.js',
-    './js/songlist_manager.js',
-    './js/list_search.js',
-    './js/leaderboard_manager.js',
-    './js/dislike_manager.js',
-    './js/local_music.js',
-    './js/download_manager.js',
-    './js/common_ui.js',
-    './js/pwa.js',
-    './js/theme_manager.js',
-    './js/tailwind_setup.js',
-    './js/log_viewer.js',
-    './js/ios-background-audio.js',
+    './js/lyrics/lyric-parser.js',
+    './js/lyrics/lyric-utils.js',
+    './js/player/quality.js',
+    './js/core/idb_store.js',
+    './js/sync/user_sync.js',
+    './js/ui/batch_pagination.js',
+    './js/library/single_song_ops.js',
+    './js/library/songlist_manager.js',
+    './js/library/list_search.js',
+    './js/library/leaderboard_manager.js',
+    './js/library/dislike_manager.js',
+    './js/local/local_music.js',
+    './js/download/download_manager.js',
+    './js/ui/common_ui.js',
+    './js/core/pwa.js',
+    './js/ui/theme_manager.js',
+    './js/ui/log_viewer.js',
+    './js/player/ios-background-audio.js',
+    './js/player/airplay.js',
+    './js/player/playback.js',
+    './js/player/chromecast.js',
     // 第三方库
-    './assets/tailwindcss.js',
-    './js/crypto-js.min.js',
-    './js/NoSleep.min.js',
-    './js/Sortable.min.js',
-    './js/marked.min.js',
+    './js/vendor/crypto-js.min.js',
+    './js/vendor/NoSleep.min.js',
+    './js/vendor/Sortable.min.js',
+    './js/vendor/marked.min.js',
     // 音频效果
-    './js/sound-effects.js',
-    './js/visualizer.js',
-    './js/wave.js',
+    './js/player/sound-effects.js',
+    './js/player/visualizer.js',
+    './js/vendor/wave.js',
     // 变调器
-    './js/pitch-shifter/fft.js',
-    './js/pitch-shifter/ola-processor.js',
-    './js/pitch-shifter/phase-vocoder.js',
+    './js/player/pitch-shifter/fft.js',
+    './js/player/pitch-shifter/ola-processor.js',
+    './js/player/pitch-shifter/phase-vocoder.js',
     // 静态资源
     './assets/logo.svg',
 ];
@@ -59,7 +66,7 @@ self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
     // 1. 过滤非 http(s) 协议 (如 chrome-extension://)，避免 cache.put 报错
-    if (!url.protocol.startsWith('http')) return;
+    if (!['http:', 'https:'].includes(url.protocol) || url.origin !== self.location.origin) return;
 
     // 2. 忽略所有音频请求、下载请求、API 请求以及动态配置接口，让浏览器直接处理
     // 拦截下载会导致大文件占用 Cache 且单个失败可能引起 SW state 不良
@@ -91,7 +98,7 @@ self.addEventListener('fetch', (event) => {
             })
             .catch(() => {
                 // 网络不可用时，尝试从缓存获取
-                return caches.match(event.request);
+                return caches.open(CACHE_NAME).then(cache => cache.match(event.request)).then(response => response || new Response('Offline', { status: 503 }));
             })
     );
 });
@@ -103,7 +110,7 @@ self.addEventListener('activate', (event) => {
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames.map((cacheName) => {
-                    if (!KNOWN_CACHES.includes(cacheName)) {
+                    if (cacheName.startsWith('lx-music-web-') && !KNOWN_CACHES.includes(cacheName)) {
                         console.log('[SW] Deleting old cache:', cacheName);
                         return caches.delete(cacheName);
                     }

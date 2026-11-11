@@ -14,8 +14,7 @@
     </script>
     <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
     <link rel="stylesheet" href="assets/fontawesome/css/all.min.css">
-    <script src="assets/tailwindcss.js"></script>
-    <script src="js/tailwind_setup.js"></script>
+    <link rel="stylesheet" href="css/utilities.css">
     <style>
         :root {
             --primary: #10b981;
@@ -411,7 +410,7 @@
             width: 100%;
             border-radius: 14px;
             padding: 13px 44px 13px 46px;
-            font-size: 14.5px;
+            font-size: 16px;
             outline: none;
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
@@ -504,6 +503,9 @@
                 transform: translateY(0);
             }
         }
+        input, select {
+            font-size: 16px;
+        }
 
         /* 抖动动画 */
         @keyframes shakeHard {
@@ -539,22 +541,20 @@
             100% { opacity: 0.8; transform: scale(1.04); }
         }
     </style>
+    <link rel="stylesheet" href="css/dynamic-backgrounds.css">
+
 </head>
 
 <body>
-
-    <!-- 动态氛围背景 -->
-    <div class="ambient-canvas">
-        <div class="aurora-blob aurora-1"></div>
-        <div class="aurora-blob aurora-2"></div>
-        <div class="aurora-blob aurora-3"></div>
+    <div id="login-scene" aria-hidden="true"></div>
+    <div class="background-picker">
+        <i class="fas fa-magic"></i>
+        <span>动效</span>
+        <!-- 选项由 DynamicBackground.fillOptions 自动填充，与播放页设置保持一致 -->
+        <select id="login-background" class="bg-picker-select" aria-label="选择登录页动态效果"></select>
     </div>
-    <div class="bg-grid-mask"></div>
-    
-    <!-- 从下往上升腾飘浮的音乐图标 -->
-    <div id="notes-container"></div>
 
-    <canvas id="particles-canvas"></canvas>
+    <div class="bg-grid-mask"></div>
     <div id="cursor-glow"></div>
 
     <!-- 左上方精美主题切换 Toggle -->
@@ -598,14 +598,19 @@
         </div>
 
         <!-- 表单区域 -->
-        <form onsubmit="handleLoginSubmit(event)" id="login-form" class="space-y-4">
+        <select id="auth-mode-input" onchange="updateLoginMode()" aria-label="登录方式" class="hidden">
+            <option value="user">账号登录</option>
+            <option value="player">播放器访问密码</option>
+        </select>
+        <input type="hidden" id="auth-password-input">
+        <form onsubmit="handleLogin(event)" id="login-form" class="space-y-4">
             
             <!-- 用户账号模式表单 -->
             <div id="user-mode-panel" class="form-panel active-panel space-y-4">
                 <!-- 账号输入框（无预填、无多余提示） -->
                 <div class="input-wrapper">
                     <input type="text" id="auth-username-input" placeholder="输入账号 / 用户名"
-                        class="modern-input" autocomplete="off" spellcheck="false">
+                        class="modern-input" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
                     <i class="fas fa-user input-icon"></i>
                 </div>
 
@@ -660,12 +665,12 @@
     </div>
 
     <script>
-        // 当前模式: 'user' (用户账号) 或 'player' (播放器密码)
         let currentMode = 'user';
 
         // ===== 主题管理 (Theme Management) =====
         function applyTheme(theme) {
             const html = document.documentElement;
+            if (!html || !html.classList) return;
             const themeLabel = document.getElementById('theme-label');
             if (theme === 'light') {
                 html.classList.remove('theme-dark');
@@ -676,185 +681,157 @@
                 html.classList.add('theme-dark');
                 if (themeLabel) themeLabel.textContent = '暗色模式';
             }
-            localStorage.setItem('lx_web_theme', theme);
+            try { localStorage.setItem('lx_web_theme', theme); } catch { }
             updateTabPillTextColor();
         }
 
         function toggleTheme() {
-            const isDark = document.documentElement.classList.contains('theme-dark');
+            const html = document.documentElement;
+            const isDark = html?.classList?.contains ? html.classList.contains('theme-dark') : true;
             applyTheme(isDark ? 'light' : 'dark');
         }
 
         function initTheme() {
-            const saved = localStorage.getItem('lx_web_theme');
+            const saved = typeof localStorage?.getItem === 'function' ? localStorage.getItem('lx_web_theme') : null;
             if (saved === 'light' || saved === 'dark') {
                 applyTheme(saved);
             } else {
-                // 跟随系统偏好
-                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const prefersDark = typeof window?.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
                 applyTheme(prefersDark ? 'dark' : 'light');
             }
         }
 
         function updateTabPillTextColor() {
-            const isLight = document.documentElement.classList.contains('theme-light');
+            const html = document.documentElement;
+            const isLight = html?.classList?.contains ? html.classList.contains('theme-light') : false;
             const btnUser = document.getElementById('btn-tab-user');
             const btnPlayer = document.getElementById('btn-tab-player');
+            if (!btnUser || !btnPlayer) return;
             if (currentMode === 'user') {
                 btnUser.className = 'tab-btn w-1/2 py-2.5 text-xs sm:text-[13px] font-bold text-white flex items-center justify-center gap-2 rounded-xl focus:outline-none';
-                btnPlayer.className = `tab-btn w-1/2 py-2.5 text-xs sm:text-[13px] font-bold ${isLight ? 'text-gray-500 hover:text-gray-800' : 'text-gray-400 hover:text-gray-200'} flex items-center justify-center gap-2 rounded-xl focus:outline-none`;
+                btnPlayer.className = 'tab-btn w-1/2 py-2.5 text-xs sm:text-[13px] font-bold ' + (isLight ? 'text-gray-500 hover:text-gray-800' : 'text-gray-400 hover:text-gray-200') + ' flex items-center justify-center gap-2 rounded-xl focus:outline-none';
             } else {
                 btnPlayer.className = 'tab-btn w-1/2 py-2.5 text-xs sm:text-[13px] font-bold text-white flex items-center justify-center gap-2 rounded-xl focus:outline-none';
-                btnUser.className = `tab-btn w-1/2 py-2.5 text-xs sm:text-[13px] font-bold ${isLight ? 'text-gray-500 hover:text-gray-800' : 'text-gray-400 hover:text-gray-200'} flex items-center justify-center gap-2 rounded-xl focus:outline-none`;
+                btnUser.className = 'tab-btn w-1/2 py-2.5 text-xs sm:text-[13px] font-bold ' + (isLight ? 'text-gray-500 hover:text-gray-800' : 'text-gray-400 hover:text-gray-200') + ' flex items-center justify-center gap-2 rounded-xl focus:outline-none';
             }
         }
 
-        // 切换登录模式
         function switchLoginMode(mode) {
-            if (currentMode === mode) return;
-            currentMode = mode;
-
-            const tabPill = document.getElementById('tab-pill');
-            const userPanel = document.getElementById('user-mode-panel');
-            const playerPanel = document.getElementById('player-mode-panel');
-            const modeDesc = document.getElementById('mode-desc');
-            const submitBtnText = document.getElementById('submit-btn-text');
-            const errorDiv = document.getElementById('auth-error');
-
-            errorDiv.classList.add('hidden');
-            updateTabPillTextColor();
-
-            if (mode === 'user') {
-                tabPill.style.transform = 'translateX(0)';
-                userPanel.classList.remove('hidden-panel');
-                userPanel.classList.add('active-panel');
-                playerPanel.classList.add('hidden-panel');
-                playerPanel.classList.remove('active-panel');
-
-                modeDesc.textContent = '登录账号以同步本地与云端歌单';
-                submitBtnText.textContent = '登录账号';
-                document.getElementById('auth-username-input').focus();
-            } else {
-                tabPill.style.transform = 'translateX(100%)';
-                playerPanel.classList.remove('hidden-panel');
-                playerPanel.classList.add('active-panel');
-                userPanel.classList.add('hidden-panel');
-                userPanel.classList.remove('active-panel');
-
-                modeDesc.textContent = '输入播放器访问密码直接进入播放器';
-                submitBtnText.textContent = '进入播放器';
-                document.getElementById('auth-player-password-input').focus();
-            }
+            const modeInput = document.getElementById('auth-mode-input');
+            if (modeInput) modeInput.value = mode;
+            updateLoginMode();
+            const target = document.getElementById(mode === 'player' ? 'auth-player-password-input' : 'auth-username-input');
+            if (target) target.focus();
         }
 
-        // 显示/隐藏密码明文
         function togglePasswordVisibility(inputId, btn) {
             const input = document.getElementById(inputId);
+            if (!input) return;
+            const isPass = input.type === 'password';
+            input.type = isPass ? 'text' : 'password';
             const icon = btn.querySelector('i');
-            if (input.type === 'password') {
-                input.type = 'text';
-                icon.classList.remove('fa-eye', 'far');
-                icon.classList.add('fa-eye-slash', 'fas');
-            } else {
-                input.type = 'password';
-                icon.classList.remove('fa-eye-slash', 'fas');
-                icon.classList.add('fa-eye', 'far');
+            if (icon) {
+                icon.className = isPass ? 'far fa-eye-slash' : 'far fa-eye';
             }
         }
 
-        // 清理本地保存的凭据
         function clearSavedSessions() {
-            localStorage.removeItem('lx_sync_user');
-            localStorage.removeItem('lx_sync_pass');
-            localStorage.removeItem('lx_sync_mode');
-            localStorage.removeItem('lx_user_token');
-            sessionStorage.removeItem('lx_login_bounce_cnt');
-            sessionStorage.removeItem('lx_login_bounce_time');
+            for (const key of ['lx_sync_user', 'lx_sync_pass', 'lx_user_token', 'lx_player_pass', 'lx_login_mode']) {
+                try { localStorage.removeItem(key); } catch { }
+            }
+            const tip = document.getElementById('footer-tip');
+            if (tip) {
+                const originalText = tip.textContent;
+                tip.textContent = '已清理本机已保存凭据';
+                tip.classList.add('text-emerald-500');
+                setTimeout(() => {
+                    tip.textContent = originalText;
+                    tip.classList.remove('text-emerald-500');
+                }, 2500);
+            }
+        }
+
+        function showError(msg) {
             const errorDiv = document.getElementById('auth-error');
             const errorMsg = document.getElementById('auth-error-msg');
-            errorDiv.classList.remove('hidden', 'bg-rose-950/50', 'border-rose-500/30', 'text-rose-300');
-            errorDiv.classList.add('bg-emerald-950/50', 'border-emerald-500/30', 'text-emerald-300');
-            errorMsg.textContent = '已清除本地保存的凭据与缓存';
-            setTimeout(() => {
-                errorDiv.classList.add('hidden');
-                errorDiv.classList.remove('bg-emerald-950/50', 'border-emerald-500/30', 'text-emerald-300');
-                errorDiv.classList.add('bg-rose-950/50', 'border-rose-500/30', 'text-rose-300');
-            }, 2500);
+            if (errorDiv?.classList) errorDiv.classList.remove('hidden');
+            if (errorMsg) errorMsg.textContent = msg;
         }
 
-        // 页面初始化检查（静默恢复与认证开关）
-        (async () => {
-            initTheme();
-            initFloatingNotes();
+        function shakeCard(card) {
+            if (!card?.classList) return;
+            card.classList.remove('shake-active');
+            void (card.offsetWidth || 0);
+            card.classList.add('shake-active');
+            setTimeout(() => card.classList.remove('shake-active'), 450);
+        }
 
-            // 重定向死循环熔断保护：如果短时间内连续从播放器跳回本登录页，停止自动跳转并停留在登录页供用户手动操作
-            const bounceKey = 'lx_login_bounce_cnt';
-            const bounceTimeKey = 'lx_login_bounce_time';
+        (async () => {
+            if (typeof initTheme === 'function') initTheme();
+
+
             const now = Date.now();
-            const lastBounce = parseInt(sessionStorage.getItem(bounceTimeKey) || '0', 10);
-            let bounceCount = parseInt(sessionStorage.getItem(bounceKey) || '0', 10);
-            if (now - lastBounce < 5000) {
-                bounceCount++;
-            } else {
-                bounceCount = 0;
-            }
-            sessionStorage.setItem(bounceTimeKey, String(now));
-            sessionStorage.setItem(bounceKey, String(bounceCount));
+            const lastBounce = parseInt(sessionStorage.getItem('lx_login_bounce_time') || '0', 10);
+            const previousCount = parseInt(sessionStorage.getItem('lx_login_bounce_cnt') || '0', 10);
+            const bounceCount = now - lastBounce < 5000 ? previousCount + 1 : 0;
+            sessionStorage.setItem('lx_login_bounce_time', String(now));
+            sessionStorage.setItem('lx_login_bounce_cnt', String(bounceCount));
 
             if (bounceCount >= 2) {
                 console.warn('[Login] 检测到连续重定向，已停止自动恢复，请在当前页面重新登录。');
-                sessionStorage.removeItem(bounceKey);
-                sessionStorage.removeItem(bounceTimeKey);
+                sessionStorage.removeItem('lx_login_bounce_time');
+                sessionStorage.removeItem('lx_login_bounce_cnt');
                 return;
             }
 
             const setPlayerName = (name) => {
-                if (!name) return;
-                document.title = `${name} - 登录`;
-                const titleEl = document.getElementById('music-login-title');
-                if (titleEl) titleEl.textContent = name;
+                if (!name || typeof document === 'undefined') return;
+                document.title = name + ' - 登录';
+                if (typeof document.getElementById === 'function') {
+                    const titleEl = document.getElementById('music-login-title');
+                    if (titleEl) titleEl.textContent = name;
+                }
             };
-            if (window.CONFIG && window.CONFIG['player.name']) {
+            if (typeof window !== 'undefined' && window.CONFIG && window.CONFIG['player.name']) {
                 setPlayerName(window.CONFIG['player.name']);
             }
+
             try {
                 const res = await fetch('/api/music/config');
                 const cfg = await res.json();
-                if (cfg['player.name']) {
+                if (cfg && cfg['player.name']) {
                     setPlayerName(cfg['player.name']);
                 }
-                if (!cfg['player.enableAuth']) {
+                if (cfg && !cfg['player.enableAuth']) {
                     window.location.replace('./');
                     return;
                 }
 
-                const verifyRes = await fetch('/api/music/auth/verify');
-                const verifyData = await verifyRes.json();
-                if (verifyData.valid) {
-                    window.location.replace('./');
-                    return;
-                }
-
-                // Safari / 浏览器凭据自动静默恢复 (通过 Token 校验)
-                const savedUser = localStorage.getItem('lx_sync_user');
                 const savedToken = localStorage.getItem('lx_user_token');
-                if (savedUser && savedToken) {
-                    console.log('[Login] 检测到已保存的用户 Token，正在尝试自动恢复 Session...');
-                    const tokenVerifyRes = await fetch('/api/music/auth/verify', {
-                        headers: {
-                            'x-user-name': savedUser,
-                            'x-user-token': savedToken
-                        }
+                const verifyRes = await fetch('/api/music/auth/verify', {
+                    headers: savedToken ? { 'x-user-token': savedToken } : undefined
+                });
+                const verifyData = await verifyRes.json();
+                if (verifyData && verifyData.valid) {
+                    window.location.replace('./');
+                    return;
+                }
+
+                // Safari 凭据恢复
+                const savedMode = localStorage.getItem('lx_login_mode') === 'player' ? 'player' : 'user';
+                const savedUser = localStorage.getItem('lx_sync_user');
+                const savedPass = localStorage.getItem(savedMode === 'player' ? 'lx_player_pass' : 'lx_sync_pass');
+                if ((savedMode === 'player' || savedUser) && savedPass) {
+                    console.log('[Login] 检测到已保存凭据，正在恢复 Session...');
+                    const autoRes = await fetch('/api/music/auth', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: savedMode === 'player' ? '' : savedUser, password: savedPass, mode: savedMode })
                     });
-                    const tokenVerifyData = await tokenVerifyRes.json();
-                    if (tokenVerifyData.valid) {
+                    const autoData = await autoRes.json();
+                    if (autoData && autoData.success) {
+                        rememberLocalLogin(autoData, savedPass);
                         window.location.replace('./');
-                        return;
-                    } else {
-                        // Token 已失效，清除本地失效凭据
-                        localStorage.removeItem('lx_sync_user');
-                        localStorage.removeItem('lx_user_token');
-                        localStorage.removeItem('lx_sync_pass');
                     }
                 }
             } catch (e) {
@@ -862,225 +839,150 @@
             }
         })();
 
-        // 提交登录表单
-        async function handleLoginSubmit(event) {
-            event.preventDefault();
-            const submitBtn = document.getElementById('submit-btn');
-            const submitBtnText = document.getElementById('submit-btn-text');
-            const errorDiv = document.getElementById('auth-error');
-            const errorMsg = document.getElementById('auth-error-msg');
-            const card = document.getElementById('auth-card');
+        function rememberLocalLogin(data, password) {
+            if (data.mode === 'player') {
+                localStorage.setItem('lx_login_mode', 'player');
+                localStorage.setItem('lx_player_pass', password);
+                for (const key of ['lx_sync_user', 'lx_sync_pass', 'lx_user_token']) localStorage.removeItem(key);
+                if (localStorage.getItem('lx_sync_mode') === 'local') localStorage.removeItem('lx_sync_mode');
+                return;
+            }
+            if (!data.username) return;
+            localStorage.setItem('lx_login_mode', 'user');
+            localStorage.removeItem('lx_player_pass');
+            localStorage.setItem('lx_sync_user', data.username);
+            localStorage.setItem('lx_sync_pass', password);
+            localStorage.setItem('lx_sync_mode', 'local');
+            if (data.token) localStorage.setItem('lx_user_token', data.token);
+        }
 
-            let payload = {};
-            if (currentMode === 'user') {
-                const username = document.getElementById('auth-username-input').value.trim();
-                const password = document.getElementById('auth-user-password-input').value;
-                if (!username) {
-                    showError('请输入用户名');
-                    document.getElementById('auth-username-input').focus();
-                    return;
-                }
-                if (!password) {
-                    showError('请输入密码');
-                    document.getElementById('auth-user-password-input').focus();
-                    return;
-                }
-                payload = { mode: 'user', username, password };
-            } else {
-                const password = document.getElementById('auth-player-password-input').value;
-                if (!password) {
-                    showError('请输入播放器访问密码');
-                    document.getElementById('auth-player-password-input').focus();
-                    return;
-                }
-                payload = { mode: 'player', password };
+        function updateLoginMode() {
+            const modeInput = document.getElementById('auth-mode-input');
+            const playerMode = (modeInput ? modeInput.value : (typeof currentMode !== 'undefined' ? currentMode : 'user')) === 'player';
+            currentMode = playerMode ? 'player' : 'user';
+
+            const userPanel = document.getElementById('user-mode-panel');
+            const playerPanel = document.getElementById('player-mode-panel');
+            const usernameField = document.getElementById('auth-username-field');
+            if (usernameField?.classList) usernameField.classList.toggle('hidden', playerMode);
+            if (userPanel?.classList) {
+                userPanel.classList.toggle('hidden-panel', playerMode);
+                userPanel.classList.toggle('active-panel', !playerMode);
+            }
+            if (playerPanel?.classList) {
+                playerPanel.classList.toggle('hidden-panel', !playerMode);
+                playerPanel.classList.toggle('active-panel', playerMode);
             }
 
-            submitBtn.disabled = true;
-            const originalIcon = submitBtn.querySelector('i').className;
-            submitBtn.querySelector('i').className = 'fas fa-spinner fa-spin';
-            submitBtnText.textContent = '验证凭据中...';
-            errorDiv.classList.add('hidden');
+            const username = document.getElementById('auth-username-input');
+            if (username) {
+                username.required = !playerMode;
+                username.disabled = playerMode;
+            }
+            const modeDesc = document.getElementById('mode-desc');
+            if (modeDesc) {
+                modeDesc.textContent = playerMode ? '输入播放器访问密码直接进入播放器' : '登录账号以同步本地与云端歌单';
+            }
+            const submitBtnText = document.getElementById('submit-btn-text');
+            if (submitBtnText) {
+                submitBtnText.textContent = playerMode ? '进入播放器' : '登录账号';
+            }
+            const tabPill = document.getElementById('tab-pill');
+            if (tabPill?.style) {
+                tabPill.style.transform = playerMode ? 'translateX(100%)' : 'translateX(0)';
+            }
+            if (typeof updateTabPillTextColor === 'function') {
+                try { updateTabPillTextColor(); } catch { }
+            }
+        }
+
+        async function handleLogin(event) {
+            if (event && event.preventDefault) event.preventDefault();
+            const modeInput = document.getElementById('auth-mode-input');
+            const mode = (modeInput ? modeInput.value : currentMode) === 'player' ? 'player' : 'user';
+            const usernameInput = document.getElementById('auth-username-input');
+            const username = mode === 'player' ? '' : (usernameInput ? usernameInput.value.trim() : '');
+            
+            const passInput = document.getElementById('auth-password-input');
+            const userPassInput = document.getElementById('auth-user-password-input');
+            const playerPassInput = document.getElementById('auth-player-password-input');
+            const password = (passInput && passInput.value) || 
+                (mode === 'user' ? (userPassInput ? userPassInput.value : '') : (playerPassInput ? playerPassInput.value : ''));
+
+            const errorDiv = document.getElementById('auth-error');
+            const errorMsg = document.getElementById('auth-error-msg');
+            const submitBtn = document.getElementById('submit-btn');
+            const submitBtnText = document.getElementById('submit-btn-text');
+            const card = document.getElementById('auth-card');
+
+            if (!password || (mode === 'user' && !username)) return;
+
+            if (submitBtn) submitBtn.disabled = true;
+            if (submitBtnText) submitBtnText.textContent = '验证凭据中...';
+            if (errorDiv) errorDiv.classList.add('hidden');
 
             try {
                 const res = await fetch('/api/music/auth', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ username, password, mode })
                 });
                 const data = await res.json();
 
                 if (data.success) {
-                    submitBtn.querySelector('i').className = 'fas fa-check-circle';
-                    submitBtnText.textContent = '验证成功，正在进入...';
-                    submitBtn.classList.remove('btn-gradient-submit');
-                    submitBtn.classList.add('bg-emerald-500');
-
-                    if (data.mode === 'user' && data.username) {
-                        localStorage.setItem('lx_sync_user', data.username);
-                        localStorage.setItem('lx_sync_mode', 'local');
-                        if (data.token) {
-                            localStorage.setItem('lx_user_token', data.token);
-                        }
-                        // 移除本地明文密码存储
-                        localStorage.removeItem('lx_sync_pass');
-                    }
-
-                    sessionStorage.removeItem('lx_login_bounce_cnt');
                     sessionStorage.removeItem('lx_login_bounce_time');
-
-                    // 优雅缩放淡出跳转
-                    card.style.transform = 'scale(0.95)';
-                    card.style.opacity = '0.4';
+                    sessionStorage.removeItem('lx_login_bounce_cnt');
+                    if (submitBtnText) submitBtnText.textContent = '验证成功，正在进入...';
+                    if (submitBtn) {
+                        submitBtn.classList.remove('btn-gradient-submit');
+                        submitBtn.classList.add('bg-emerald-500');
+                    }
+                    rememberLocalLogin(data, password);
+                    if (card) {
+                        card.style.transform = 'scale(0.95)';
+                        card.style.opacity = '0.4';
+                    }
                     setTimeout(() => window.location.replace('./'), 260);
                 } else {
-                    showError(data.message || (currentMode === 'user' ? '账号或密码错误' : '播放器访问密码错误'));
+                    showError(data.message || (mode === 'user' ? '账号或密码错误' : '播放器访问密码错误'));
                     shakeCard(card);
-                    submitBtn.disabled = false;
-                    submitBtn.querySelector('i').className = originalIcon;
-                    submitBtnText.textContent = currentMode === 'user' ? '登录账号' : '进入播放器';
+                    if (submitBtn) submitBtn.disabled = false;
+                    if (submitBtnText) submitBtnText.textContent = mode === 'user' ? '登录账号' : '进入播放器';
                 }
             } catch (e) {
                 console.error('[Login] 请求失败:', e);
                 showError('网络连接异常，请检查服务端状态');
                 shakeCard(card);
-                submitBtn.disabled = false;
-                submitBtn.querySelector('i').className = originalIcon;
-                submitBtnText.textContent = currentMode === 'user' ? '登录账号' : '进入播放器';
+                if (submitBtn) submitBtn.disabled = false;
+                if (submitBtnText) submitBtnText.textContent = mode === 'user' ? '登录账号' : '进入播放器';
             }
         }
+        const handleLoginSubmit = handleLogin;
 
-        function showError(msg) {
-            const errorDiv = document.getElementById('auth-error');
-            const errorMsg = document.getElementById('auth-error-msg');
-            errorDiv.classList.remove('hidden');
-            errorMsg.textContent = msg;
-        }
-
-        function shakeCard(card) {
-            card.classList.remove('shake-active');
-            void card.offsetWidth; // 触发 reflow
-            card.classList.add('shake-active');
-            setTimeout(() => card.classList.remove('shake-active'), 450);
-        }
-
-        // 鼠标微光移动视差效果
-        const cursorGlow = document.getElementById('cursor-glow');
-        window.addEventListener('mousemove', (e) => {
-            cursorGlow.style.left = e.clientX + 'px';
-            cursorGlow.style.top = e.clientY + 'px';
-        });
-
-        // 动态生成从下至上持续升腾的音乐图标
-        function initFloatingNotes() {
-            const container = document.getElementById('notes-container');
-            if (!container) return;
-            container.innerHTML = '';
-            const noteIcons = [
-                'fa-music',
-                'fa-headphones',
-                'fa-headphones-simple',
-                'fa-compact-disc',
-                'fa-record-vinyl',
-                'fa-guitar',
-                'fa-drum',
-                'fa-microphone',
-                'fa-microphone-lines',
-                'fa-wave-square',
-                'fa-sliders',
-                'fa-sliders-h',
-                'fa-volume-high',
-                'fa-volume-low',
-                'fa-podcast',
-                'fa-radio',
-                'fa-satellite-dish',
-                'fa-circle-play',
-                'fa-circle-pause',
-                'fa-forward-step',
-                'fa-shuffle',
-                'fa-repeat',
-                'fa-heart',
-                'fa-file-audio',
-                'fa-icons',
-                'fa-bolt-lightning'
-            ];
-            const count = 30;
-            for (let i = 0; i < count; i++) {
-                const note = document.createElement('i');
-                const icon = noteIcons[Math.floor(Math.random() * noteIcons.length)];
-                const sizeClass = ['text-xs', 'text-sm', 'text-base', 'text-lg', 'text-xl', 'text-2xl', 'text-3xl'][Math.floor(Math.random() * 7)];
-                note.className = `fas ${icon} floating-note ${sizeClass}`;
-                note.style.left = `${Math.random() * 96}%`;
-                
-                // 错开上升周期，全屏随时分布，无缝循环
-                const duration = 12 + Math.random() * 12;
-                const delay = Math.random() * duration;
-                note.style.animationDuration = `${duration}s`;
-                note.style.animationDelay = `-${delay}s`;
-                container.appendChild(note);
-            }
-        }
-
-        // 优雅 Canvas 动态漂浮星尘微光粒子
-        (function initCanvasParticles() {
-            const canvas = document.getElementById('particles-canvas');
-            const ctx = canvas.getContext('2d');
-            let width = (canvas.width = window.innerWidth);
-            let height = (canvas.height = window.innerHeight);
-
-            window.addEventListener('resize', () => {
-                width = canvas.width = window.innerWidth;
-                height = canvas.height = window.innerHeight;
-            });
-
-            const particles = [];
-            const particleCount = 28;
-
-            for (let i = 0; i < particleCount; i++) {
-                particles.push({
-                    x: Math.random() * width,
-                    y: Math.random() * height,
-                    radius: Math.random() * 2 + 0.8,
-                    color: Math.random() > 0.5 ? 'rgba(16, 185, 129, ' : 'rgba(6, 182, 212, ',
-                    alpha: Math.random() * 0.45 + 0.1,
-                    speedY: Math.random() * 0.4 + 0.15,
-                    speedX: (Math.random() - 0.5) * 0.2,
-                    pulse: Math.random() * Math.PI,
+        if (typeof document?.getElementById === 'function') {
+            const cursorGlow = document.getElementById('cursor-glow');
+            if (cursorGlow && typeof window?.addEventListener === 'function') {
+                window.addEventListener('mousemove', (e) => {
+                    cursorGlow.style.left = e.clientX + 'px';
+                    cursorGlow.style.top = e.clientY + 'px';
                 });
             }
+        }
 
-            function animate() {
-                ctx.clearRect(0, 0, width, height);
-                for (const p of particles) {
-                    p.y -= p.speedY;
-                    p.x += p.speedX;
-                    p.pulse += 0.02;
-
-                    if (p.y < -10) {
-                        p.y = height + 10;
-                        p.x = Math.random() * width;
-                    }
-                    if (p.x < -10) p.x = width + 10;
-                    if (p.x > width + 10) p.x = -10;
-
-                    const currentAlpha = p.alpha * (0.6 + 0.4 * Math.sin(p.pulse));
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-                    ctx.fillStyle = p.color + currentAlpha + ')';
-                    ctx.shadowBlur = 8;
-                    ctx.shadowColor = p.color + '0.5)';
-                    ctx.fill();
-                }
-                requestAnimationFrame(animate);
-            }
-            animate();
-        })();
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const userInput = document.getElementById('auth-username-input');
-            if (userInput) userInput.focus();
-        });
-    </script>
+        if (typeof document?.addEventListener === 'function') {
+            document.addEventListener('DOMContentLoaded', () => {
+                if (typeof document?.getElementById !== 'function') return;
+                const modeInput = document.getElementById('auth-mode-input');
+                const savedMode = localStorage.getItem('lx_login_mode') === 'player' ? 'player' : 'user';
+                if (modeInput) modeInput.value = savedMode;
+                updateLoginMode();
+                const target = document.getElementById(savedMode === 'player' ? 'auth-player-password-input' : 'auth-username-input');
+                if (target) target.focus();
+            });
+        }
+</script>
+    <script src="js/ui/dynamic_backgrounds.js"></script>
+    
 </body>
 
 </html>
