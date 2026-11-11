@@ -236,13 +236,15 @@ const ICY_META_INTERVAL = 16000 // 标准 ICY 元数据间隔 16KB
 
 function safeRedirect(res: http.ServerResponse, targetUrl: string, extraHeaders?: Record<string, string | number>) {
     let loc = String(targetUrl || '').trim()
-    try {
-        if (/^https?:\/\//i.test(loc)) {
-            // 避免 encodeURI 对已编码的 URL 进行二次转义（如 %20 -> %2520）破坏上游签名参数
-            loc = encodeURI(decodeURI(loc))
+    // 纯 ASCII 的 URL 必须原样透传：直链 query 里通常已带签名(AWS4 X-Amz-Signature、云盘 token 等)，
+    // 任何 encodeURI/decodeURI 往返都会改写已转义序列(%3B -> %253B、%2B -> %252B)，导致上游签名校验失败(403)。
+    // 只有含非 ASCII 字符时才需要编码，否则 Node 的 writeHead 会因 header 非 latin1 报错。
+    if (/[^\x20-\x7E]/.test(loc)) {
+        try {
+            loc = encodeURI(loc)
+        } catch {
+            // fallback to raw
         }
-    } catch {
-        // fallback to raw
     }
     res.writeHead(302, {
         Location: loc,
