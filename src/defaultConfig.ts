@@ -147,8 +147,8 @@ const config: LX.Config = {
   'openlist.password': '', // OpenList 密码
   'openlist.token': '', // OpenList 用户令牌(与账号密码二选一)
   'openlist.root': '/lx_music', // OpenList 中 lx-music 备份根目录
-  'openlist.verifyInterval': 15, // 远端可用性校验周期(分钟)；常态轮询不再逐行探测已验证记录
-  'openlist.syncInterval': 120, // 双向同步周期(分钟)；事件同步另有 5 分钟最小间隔
+  'openlist.verifyInterval': 5, // 远端可用性校验周期(分钟)；常态轮询不再逐行探测已验证记录
+  'openlist.syncInterval': 60, // 双向同步周期(分钟)；事件同步另有 5 分钟最小间隔
   'openlist.historyRetentionDays': 7, // 云端历史版本保留天数
   'openlist.userBackups': '[]', // 各用户备份目录配置(JSON 数组)
   'openlist.includeNonAudio': false, // 是否同步非音频文件(图片/封面等)
