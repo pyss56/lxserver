@@ -7523,6 +7523,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'user.enableCacheSizeLimit': global.lx.config['user.enableCacheSizeLimit'],
             'user.cacheSizeLimit': global.lx.config['user.cacheSizeLimit'],
             'cache.maxAgeDays': typeof global.lx.config['cache.maxAgeDays'] !== 'undefined' ? global.lx.config['cache.maxAgeDays'] : 14,
+            'cache.unplayedMaxAgeDays': typeof global.lx.config['cache.unplayedMaxAgeDays'] !== 'undefined' ? global.lx.config['cache.unplayedMaxAgeDays'] : 7,
             'admin.password': global.lx.config['admin.password'],
             'player.name': global.lx.config['player.name'] || 'LX Music Web',
             'player.enableAuth': global.lx.config['player.enableAuth'] || false,
@@ -7581,6 +7582,9 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'subsonic.dislikeRequireSinger': global.lx.config['subsonic.dislikeRequireSinger'] ?? true,
             'subsonic.lyricTranslation': global.lx.config['subsonic.lyricTranslation'] ?? true,
             'subsonic.cacheOnPlay': global.lx.config['subsonic.cacheOnPlay'] ?? false,
+            // 兼容旧配置：原 detectDownload 只控制识别，现拆成「识别恒开 + saveDownload 控制是否留档」；
+            // 未显式配置时默认否（不占服务器空间/缓存/备份）。
+            'subsonic.saveDownload': global.lx.config['subsonic.saveDownload'] ?? (global.lx.config as any)['subsonic.detectDownload'] ?? false,
             'subsonic.playCacheFirst': global.lx.config['subsonic.playCacheFirst'] ?? false,
             'subsonic.playCacheFirstUseOpenlist': global.lx.config['subsonic.playCacheFirstUseOpenlist'] ?? false,
             'subsonic.openlistDelivery': global.lx.config['subsonic.openlistDelivery'] || 'direct',
@@ -7606,11 +7610,13 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'openlist.password': global.lx.config['openlist.password'] || '',
             'openlist.token': global.lx.config['openlist.token'] || '',
             'openlist.root': global.lx.config['openlist.root'] || '/lx_music',
-            'openlist.verifyInterval': global.lx.config['openlist.verifyInterval'] || 5,
+            'openlist.verifyInterval': global.lx.config['openlist.verifyInterval'] || 15,
             'openlist.syncInterval': global.lx.config['openlist.syncInterval'] || 60,
             'openlist.historyRetentionDays': global.lx.config['openlist.historyRetentionDays'] || 7,
             'openlist.userBackups': global.lx.config['openlist.userBackups'] || '[]',
             'openlist.includeNonAudio': global.lx.config['openlist.includeNonAudio'] === true,
+            'openlist.onlyPlayed': global.lx.config['openlist.onlyPlayed'] === true,
+            'openlist.onlyPlayedCompleted': global.lx.config['openlist.onlyPlayedCompleted'] === true,
             'openlist.externalUrl': global.lx.config['openlist.externalUrl'] || global.lx.config['openlist.endpoint'] || '',
             'openlist.signExpireHours': global.lx.config['openlist.signExpireHours'] ?? 6,
             'openlist.backupSystemConfig': global.lx.config['openlist.backupSystemConfig'] === true,
@@ -7661,6 +7667,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['user.enableCacheSizeLimit'] !== undefined) global.lx.config['user.enableCacheSizeLimit'] = newConfig['user.enableCacheSizeLimit']
               if (newConfig['user.cacheSizeLimit'] !== undefined) global.lx.config['user.cacheSizeLimit'] = parseInt(newConfig['user.cacheSizeLimit']) || 2000
               if (newConfig['cache.maxAgeDays'] !== undefined) global.lx.config['cache.maxAgeDays'] = Math.max(0, parseInt(newConfig['cache.maxAgeDays']) || 0)
+              if (newConfig['cache.unplayedMaxAgeDays'] !== undefined) global.lx.config['cache.unplayedMaxAgeDays'] = Math.max(0, parseInt(newConfig['cache.unplayedMaxAgeDays']) || 0)
               if (newConfig['system.allowUnsafeVM'] !== undefined) global.lx.config['system.allowUnsafeVM'] = newConfig['system.allowUnsafeVM']
 
               let warning = ''
@@ -7804,11 +7811,13 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['openlist.password'] !== undefined) global.lx.config['openlist.password'] = newConfig['openlist.password']
               if (newConfig['openlist.token'] !== undefined) global.lx.config['openlist.token'] = newConfig['openlist.token']
               if (newConfig['openlist.root'] !== undefined) global.lx.config['openlist.root'] = newConfig['openlist.root']
-              if (newConfig['openlist.verifyInterval'] !== undefined) global.lx.config['openlist.verifyInterval'] = parseInt(newConfig['openlist.verifyInterval']) || 5
+              if (newConfig['openlist.verifyInterval'] !== undefined) global.lx.config['openlist.verifyInterval'] = parseInt(newConfig['openlist.verifyInterval']) || 15
               if (newConfig['openlist.syncInterval'] !== undefined) global.lx.config['openlist.syncInterval'] = parseInt(newConfig['openlist.syncInterval']) || 60
               if (newConfig['openlist.historyRetentionDays'] !== undefined) global.lx.config['openlist.historyRetentionDays'] = Math.min(3650, Math.max(1, Math.floor(Number(newConfig['openlist.historyRetentionDays']) || 7)))
               if (newConfig['openlist.userBackups'] !== undefined) global.lx.config['openlist.userBackups'] = newConfig['openlist.userBackups']
               if (newConfig['openlist.includeNonAudio'] !== undefined) global.lx.config['openlist.includeNonAudio'] = newConfig['openlist.includeNonAudio']
+              if (newConfig['openlist.onlyPlayed'] !== undefined) global.lx.config['openlist.onlyPlayed'] = newConfig['openlist.onlyPlayed'] === true
+              if (newConfig['openlist.onlyPlayedCompleted'] !== undefined) global.lx.config['openlist.onlyPlayedCompleted'] = newConfig['openlist.onlyPlayedCompleted'] === true
               if (newConfig['openlist.externalUrl'] !== undefined) global.lx.config['openlist.externalUrl'] = String(newConfig['openlist.externalUrl']).replace(/[\\/]+$/, '')
               // 0 允许（=不过期），上限 30 天，避免误填永久凭据
               if (newConfig['openlist.signExpireHours'] !== undefined) global.lx.config['openlist.signExpireHours'] = Math.min(720, Math.max(0, Math.floor(Number(newConfig['openlist.signExpireHours']) || 0)))
@@ -7888,6 +7897,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['subsonic.recommendPoolSize'] !== undefined) global.lx.config['subsonic.recommendPoolSize'] = Number(newConfig['subsonic.recommendPoolSize'])
               if (newConfig['subsonic.lyricTranslation'] !== undefined) global.lx.config['subsonic.lyricTranslation'] = newConfig['subsonic.lyricTranslation']
               if (newConfig['subsonic.cacheOnPlay'] !== undefined) global.lx.config['subsonic.cacheOnPlay'] = newConfig['subsonic.cacheOnPlay']
+              if (newConfig['subsonic.saveDownload'] !== undefined) global.lx.config['subsonic.saveDownload'] = newConfig['subsonic.saveDownload'] === true
               if (newConfig['subsonic.playCacheFirst'] !== undefined) global.lx.config['subsonic.playCacheFirst'] = newConfig['subsonic.playCacheFirst']
               if (newConfig['subsonic.playCacheFirstUseOpenlist'] !== undefined) global.lx.config['subsonic.playCacheFirstUseOpenlist'] = newConfig['subsonic.playCacheFirstUseOpenlist']
               if (newConfig['subsonic.openlistDelivery'] !== undefined) global.lx.config['subsonic.openlistDelivery'] = newConfig['subsonic.openlistDelivery']
@@ -7941,7 +7951,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (typeof global.lx?.saveConfig === 'function') {
                 global.lx.saveConfig()
               }
-              if (['user.enableCacheSizeLimit', 'user.cacheSizeLimit', 'cache.maxAgeDays'].some(key => newConfig[key] !== undefined)) {
+              if (['user.enableCacheSizeLimit', 'user.cacheSizeLimit', 'cache.maxAgeDays', 'cache.unplayedMaxAgeDays'].some(key => newConfig[key] !== undefined)) {
                 setImmediate(() => void fileCache.cleanupAllCaches())
               }
 
