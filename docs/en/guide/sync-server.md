@@ -93,6 +93,28 @@ Artwork, word lyrics, scan display and folders depend on both protocol and clien
 
 Create the account before connecting. Review merge/overwrite direction and back up existing playlists. To recover, select the correct account and snapshot time, reconnect clients and check lists. Playlist restoration does not restore deleted audio files.
 
+### Aligning existing filenames after a naming-format change
+
+After switching the format in Settings → Song naming, **only newly created files use the new format**; existing files are not renamed automatically. Two manual entries under Cloud backup → OpenList align the whole library with the currently effective format:
+
+- **Preview (read-only)**: `POST /api/openlist/cache/rename` with `mode: "preview"` (the default). Changes nothing and is safe to call repeatedly. Returns `scanned` / `ready` / `unchanged` / `conflicts` / `missing` counts, the effective pattern per user, and each old → new filename.
+- **Apply rename**: `POST /api/openlist/cache/rename` with `mode: "apply"`. Optional `user` / `folder` / `limit`; `cloud: false` limits changes to local disk and the backup database.
+
+Each file is updated in four places together, so no duplicate uploads or orphaned files appear:
+
+| Place | What changes |
+| --- | --- |
+| Local disk | Audio file, same-stem `.lrc`, external cover cache (re-hashed under the new filename) |
+| Cache index | `filename` / `lyricFilename` in `cache_index.json` / `music_index.json` |
+| OpenList backup DB | `local_path` / `remote_path` / `name` / `cache_metadata` in `openlist_backup_files`, the `openlist_local_files` path and filename, attachment local/remote paths |
+| Cloud | OpenList's native rename API (audio plus same-stem attachments) — **metadata only, audio bytes are never re-uploaded** |
+
+The target format comes entirely from existing config (per-user `settings.json` `serverCacheNamingPattern` first, then global `cache.namingPattern`), reusing `getFileName` for all five patterns and its collision-suffix rule. **No format is hard-coded, no config is modified, and nothing happens automatically.** Target-name collisions are skipped, never overwritten; each item is idempotent, so re-running after an interruption converges the remaining work. When cloud sync is disabled, local files and DB rows (including `remote_path`) are still updated so a later sync uploads under the new name instead of leaving stale paths.
+
+Concurrency protection: renaming touches the cloud, then the local disk, then the backup DB, leaving a brief window where the local file already has the new name while the DB still has the old one. A sync landing in that window would treat the new name as a new file, insert a duplicate row and upload it again. Rename therefore runs **mutually exclusive** with sync, background verification and the upload queue: the apply entry point refuses to start while any of them is running, and no new sync or verification starts mid-rename. Preview is read-only and unaffected.
+
+**Scope is audio plus its same-stem attachments only.** Playlists, dislike/rating snapshots (`snapshot_*.json`, `snapshotInfo.json`) and user settings are not renamed — their filenames are structural (derived from user and data type, not the song naming pattern) and their bodies store song IDs, not audio filenames. The only adjacent file that changes is `music_index.json` / `cache_index.json`: its `filename` / `lyricFilename` entries are rewritten and saved during the rename, so the next sync sees a content-hash change and re-uploads that one data file. If that backup type is not enabled, the cloud copy never existed.
+
 User sync and automatic downloads are separate. Account download permission, playlist selection and quality settings determine what is downloaded; enabling LX sync alone does not download every track.
 
 ## File manager

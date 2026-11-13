@@ -2851,6 +2851,23 @@
                                                 type="button" class="btn-secondary btn-sync-highlight"
                                                 onclick="app.runOpenlistSync()">立即备份并同步缓存</button></div>
                                     </div>
+                                    <div class="bm-op-block" id="openlist-rename-panel" style="display:none;">
+                                        <div class="bm-group-title">切换命名格式后同步存量文件名（手动执行）</div>
+                                        <div class="backup-policy-banner"><svg viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2" class="backup-banner-icon">
+                                                <circle cx="12" cy="12" r="10"></circle>
+                                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                                            </svg><span id="openlist-naming-advice">在「设置 → 歌曲命名方式」切换格式后，已有文件不会被自动改名。请在此先只读预览，确认无误再执行，把本地文件名、备份库记录与云端文件名一起改成新格式。</span></div>
+                                        <p class="config-hint">
+                                            预览为只读，不改动任何内容，可反复执行。执行时逐个文件同步：本地音频与歌词、缓存索引、OpenList 备份库中的文件名相关字段、云端文件名（走云端重命名接口，不重新上传音频字节）。目标名冲突会跳过而不覆盖，中途失败可重复执行继续收敛。云端同步开启时才会改云端文件名。</p>
+                                        <div class="backup-policy-actions"><button type="button" class="btn-secondary"
+                                                onclick="app.previewCacheRename()">预览待改名清单（只读）</button><button
+                                                type="button" class="btn-secondary"
+                                                onclick="app.applyCacheRename()">执行重命名</button></div>
+                                        <pre id="openlist-rename-result"
+                                            style="display:none;white-space:pre-wrap;word-break:break-all;margin-top:10px;padding:10px;border-radius:6px;font-size:12px;max-height:260px;overflow:auto;"></pre>
+                                    </div>
                                 </div>
                             </form>
                             <form id="openlist-cache-form" class="config-card glass" style="display:none;"

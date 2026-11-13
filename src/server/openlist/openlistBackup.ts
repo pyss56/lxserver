@@ -183,6 +183,14 @@ const MAX_AUTO_RETRIES = 5
 /** 单次上传内置重试次数（覆盖网络抖动 / token 过期） */
 const UPLOAD_RETRY_TIMES = 3
 
+/**
+ * 是否有会改动云端/本地/备份库的任务正在进行。
+ * 供「存量文件批量改名」等外部入口在开工前拒绝重叠执行。
+ */
+export function isOpenlistBusy(): boolean {
+  return !!(syncJob || verifyRunning || manualTransfers || activeUploads || uploadQueue.length) || isCloudRestoreRunning()
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
@@ -388,7 +396,7 @@ function currentUploadRow(row: any, cl: OpenListClient): any {
   return getBackupById(row.id)!
 }
 
-function getClient(): OpenListClient | null {
+export function getClient(): OpenListClient | null {
   const cfg = getConfig()
   if (!cfg.enable || !cfg.endpoint) { client = null; clientSig = ''; return null }
   // 按配置签名缓存客户端：签名未变时复用，变化时才重建

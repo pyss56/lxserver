@@ -41,6 +41,7 @@ import { initUserApis, unloadUserApis, callUserApiGetMusicUrl, isSourceSupported
 import { startVerifyScheduler, runSyncNow, listBackups, startOpenlistMetadata, openlistMetadataStatus, cancelMetadata, retryBackup, deleteOpenlistBackups, registerFileCacheSyncHook, restoreOpenlistData, triggerBackfillUploadDelete } from '@/server/openlist/openlistBackup'
 import { getOpenlistRecoveryHistory, startOpenlistRestore, listRestoreTasks, cancelRestoreTask, rollbackRestoreTask, deleteRestoreTask } from '@/server/openlist/openlistBackup'
 import { prepareOpenlistIntegrity, startOpenlistIntegrity, integrityStatus, cancelIntegrity } from '@/server/openlist/openlistBackup'
+import { planCacheRename, applyCacheRename } from '@/server/openlist/openlistRenameSync'
 import { BACKUP_TYPE_INFO, getBackupTypes, normalizeBackupTypes, isCloudBackupRunning } from '@/utils/backupPolicy'
 import { OpenListClient } from '@/server/openlist/openlistClient'
 
@@ -8114,6 +8115,34 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             res.end(JSON.stringify({ success: false, ok: false, error: e?.message || String(e) }))
           }
         })
+        return
+      }
+
+      // [切换命名格式后同步存量文件名] preview=只读预览，apply=手动执行
+      if (pathname === '/api/openlist/cache/rename' && req.method === 'POST') {
+        if (req.headers['x-frontend-auth'] !== global.lx.config['admin.password']) {
+          res.writeHead(401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, error: 'Unauthorized' })); return
+        }
+        void (async () => {
+          try {
+            const body = JSON.parse(await readBody(req) || '{}')
+            const options = {
+              user: typeof body.user === 'string' && body.user ? body.user : undefined,
+              folder: body.folder === 'cache' || body.folder === 'music' ? body.folder : undefined,
+              limit: body.limit === undefined ? undefined : Number(body.limit),
+              cloud: body.cloud === false ? false : undefined,
+            }
+            if (body.mode === 'apply') {
+              const result = await applyCacheRename(options)
+              res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true, ...result }))
+            } else {
+              const result = await planCacheRename(options)
+              res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true, ...result }))
+            }
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, error: e?.message || String(e) }))
+          }
+        })()
         return
       }
 

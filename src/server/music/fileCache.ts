@@ -414,6 +414,19 @@ const hasCachedCover = (filename: string, username: string, stats?: Stats) => {
     return !!readCoverCache(filename, username, stats)
 }
 
+/**
+ * 重命名音频时迁移外部封面缓存：缓存文件名由「原文件名 + 原 stats」哈希得出，
+ * 改名后必须按新文件名与新 stats 重写，否则封面丢失。仅操作缓存，不改音频文件。
+ */
+export const migrateCoverCacheOnRename = (
+    oldFilename: string, newFilename: string, username: string,
+    oldStats?: Stats, newStats?: Stats,
+) => {
+    if (oldFilename === newFilename) return
+    const cover = readCoverCache(oldFilename, username, oldStats)
+    if (cover) writeCoverCache(newFilename, username, cover.data, cover.mime, newStats)
+}
+
 const writeCoverCache = (filename: string, username: string, data: Buffer | Uint8Array, mime: string, stats?: Stats) => {
     const coverData = Buffer.from(data)
     const detectedMime = detectImageMime(coverData)

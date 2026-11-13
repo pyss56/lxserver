@@ -4508,7 +4508,12 @@ class App {
         if (hint) hint.style.display = enabled ? 'none' : 'block'
         if (cacheHint) cacheHint.style.display = enabled ? 'none' : 'block'
         const active = enabled && this.loadedConfig?.['openlist.enable'] === true
-        for (const id of ['openlist-operation-panel', 'openlist-cache-form', 'openlist-cache-shortcut']) {
+        const advice = document.getElementById('openlist-naming-advice')
+        if (advice) {
+            const pattern = this.loadedConfig?.['cache.namingPattern'] || 'simple'
+            advice.textContent = '当前生效的命名格式为「' + pattern + '」（用户级设置可覆盖全局）。在「设置 → 歌曲命名方式」切换格式后，已有文件不会自动改名；请在此先只读预览，确认无误再执行，把本地文件名、缓存索引、备份库记录与云端文件名一起改成新格式。'
+        }
+        for (const id of ['openlist-operation-panel', 'openlist-rename-panel', 'openlist-cache-form', 'openlist-cache-shortcut']) {
             const element = document.getElementById(id)
             if (element) element.style.display = active ? '' : 'none'
         }
@@ -4658,6 +4663,58 @@ class App {
         } catch (e) {
             console.error(e)
             if (window.showError) window.showError('测试连接出错: ' + (e && e.message || e))
+        }
+    }
+
+    async previewCacheRename() {
+        const out = document.getElementById('openlist-rename-result')
+        try {
+            if (window.showInfo) window.showInfo('正在只读生成改名清单…')
+            const r = await this.request('/api/openlist/cache/rename', { method: 'POST', body: JSON.stringify({ mode: 'preview', limit: 200 }) })
+            if (!r || !r.success) throw new Error((r && r.error) || '预览失败')
+            const lines = [
+                '扫描 ' + r.scanned + ' 首；待改名 ' + r.ready + '，已是目标格式 ' + r.unchanged + '，冲突 ' + r.conflicts + '，本地文件缺失 ' + r.missing,
+                '云端同步：' + (r.cloudEnabled ? '已启用（执行时会同步改云端文件名，不重传音频）' : '未启用（只改本地与备份库）'),
+                '各用户生效格式：' + Object.entries(r.namingPatterns || {}).map(([u, p]) => u + '=' + p).join('，'),
+            ]
+            if (r.warning) lines.push('提示：' + r.warning)
+            if (r.truncated) lines.push('（仅列出前 ' + r.items.length + ' 条）')
+            for (const item of (r.items || [])) {
+                lines.push('[' + item.status + (item.reason ? '/' + item.reason : '') + '] ' + item.user + '/' + item.folder + '/' + item.oldFilename + '  →  ' + item.newFilename)
+            }
+            if (out) { out.style.display = 'block'; out.textContent = lines.join('\n') }
+            if (window.showSuccess) window.showSuccess('预览完成（只读，未改动任何内容）')
+        } catch (e) {
+            if (out) { out.style.display = 'block'; out.textContent = '预览失败：' + (e && e.message || e) }
+            if (window.showError) window.showError('预览失败: ' + (e && e.message || e))
+        }
+    }
+
+    async applyCacheRename() {
+        const out = document.getElementById('openlist-rename-result')
+        const ready = await this.request('/api/openlist/cache/rename', { method: 'POST', body: JSON.stringify({ mode: 'preview', limit: 1 }) })
+        if (!ready || !ready.success) {
+            if (window.showError) window.showError('无法预览：' + ((ready && ready.error) || '未知错误'))
+            return
+        }
+        if (!window.confirm('将按当前命名格式重命名 ' + ready.ready + ' 个文件（本地 + 备份库记录 + 云端文件名），冲突 ' + ready.conflicts + ' 项会跳过。确认执行？')) return
+        try {
+            if (window.showInfo) window.showInfo('正在同步重命名…')
+            const r = await this.request('/api/openlist/cache/rename', { method: 'POST', body: JSON.stringify({ mode: 'apply', limit: 2000 }) })
+            if (!r || !r.success) throw new Error((r && r.error) || '执行失败')
+            const lines = [
+                '成功 ' + r.renamed + '，跳过 ' + r.skipped + '，冲突 ' + r.conflicts + '，失败 ' + r.failed,
+                '云端重命名 ' + r.cloudRenamed + '，备份库更新 ' + r.dbUpdated,
+            ]
+            for (const item of (r.items || [])) {
+                if (item.status === 'ok') continue
+                lines.push('[' + item.status + (item.reason ? '/' + item.reason : '') + '] ' + item.oldFilename + '  →  ' + item.newFilename)
+            }
+            if (out) { out.style.display = 'block'; out.textContent = lines.join('\n') }
+            if (window.showSuccess) window.showSuccess('重命名完成：成功 ' + r.renamed + '，失败 ' + r.failed)
+            if (r.failed || r.conflicts) this.previewCacheRename()
+        } catch (e) {
+            if (window.showError) window.showError('重命名失败: ' + (e && e.message || e))
         }
     }
 
