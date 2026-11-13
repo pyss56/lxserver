@@ -23,6 +23,7 @@ export function integrityStatus() {
   return getIntegrityStatus(context.files, context.source)
 }
 import { metadataObservations, recordRemoteObservation, metadataStatus, startMetadata, cancelMetadata } from './openlistMetadata'
+import { isTaskRunning, runExclusive } from './openlistTaskLock'
 export { cancelMetadata }
 function metadataSource() { const cfg = getConfig(); return crypto.createHash('sha256').update(JSON.stringify([cfg.endpoint, cfg.root.replace(/\\/g, '/').replace(/\/+$/, '') || '/', cfg.username, cfg.token || cfg.password])).digest('hex') }
 let connectionSource = ''
@@ -1125,7 +1126,8 @@ export function registerFileCacheSyncHook(): void {
 // ---------- 验证轮询（确认网盘已落库，并按模式决定删本地/补缓存）----------
 
 export async function verifyPending(): Promise<void> {
-  if (verifyRunning || syncJob || manualTransfers || isCloudRestoreRunning()) return
+  // isTaskRunning() 覆盖「存量文件批量改名」：改名期间不改动远端基线。
+  if (verifyRunning || syncJob || manualTransfers || isCloudRestoreRunning() || isTaskRunning()) return
   const releaseBackup = beginCloudBackup()
   verifyRunning = true
   try {
@@ -1672,8 +1674,13 @@ export async function restoreOpenlistData(options: OpenlistRestoreOptions = {}) 
 /**
  * 手动触发同步（UI 按钮调用）。可选按 user / folder 过滤。
  * 与定时同步串行执行，上传完成后才返回结果。
+ * 也经互斥闸门与「存量文件批量改名」串行，避免改名中间态被当成新文件重复上传。
  */
-export async function runSyncNow(opts: { user?: string; folder?: 'cache' | 'music' | 'list' } = {}): Promise<SyncSummary> {
+export function runSyncNow(opts: { user?: string; folder?: 'cache' | 'music' | 'list' } = {}): Promise<SyncSummary> {
+  return runExclusive(() => runSyncExclusive(opts))
+}
+
+async function runSyncExclusive(opts: { user?: string; folder?: 'cache' | 'music' | 'list' }): Promise<SyncSummary> {
   while (syncJob) await syncJob.catch(() => {})
   const releaseBackup = beginCloudBackup()
   const job = runSyncImpl(opts)
@@ -1828,7 +1835,7 @@ export async function retryBackup(id: number): Promise<{ ok: boolean; message?: 
   const row = getBackupById(id)
   if (!row || row.deleted_at || row.status === 'deleted') return { ok: false, message: '备份记录不存在或已删除' }
   if (!rowEnabled(row, cfg)) return { ok: false, message: '该用户或目录未启用 OpenList 同步' }
-  if (syncJob || verifyRunning || manualTransfers || isCloudRestoreRunning() || enqueuedIds.has('f:' + id)) return { ok: false, message: '文件正在同步或校验，请稍后重试' }
+  if (syncJob || verifyRunning || manualTransfers || isCloudRestoreRunning() || isTaskRunning() || enqueuedIds.has('f:' + id)) return { ok: false, message: '文件正在同步或校验，请稍后重试' }
   const cl = getClient()
   if (!cl) return { ok: false, message: 'OpenList 客户端不可用' }
   if (!await connectionReady(cl)) return { ok: false, message: getOpenlistConnection().message }
@@ -1862,7 +1869,7 @@ export async function deleteOpenlistBackups(ids: number[], skipMainRemote = fals
   remoteRemoved: number
   remoteFailed: string[]
 }> {
-  if (!skipMainRemote && (syncJob || verifyRunning || manualTransfers)) throw new Error('OpenList 正在同步或校验，请稍后删除')
+  if (!skipMainRemote && (syncJob || verifyRunning || manualTransfers || isTaskRunning())) throw new Error('OpenList 正在同步或校验，请稍后删除')
   const release = skipMainRemote ? () => {} : beginCloudRestore()
   try {
     const db = getBackupDb()
