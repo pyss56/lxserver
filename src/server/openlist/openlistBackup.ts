@@ -1458,7 +1458,7 @@ export function startVerifyScheduler(): void {
   schedulerSignature = signature
   if (!cfg.enable) return
   const delay = (minutes: number, fallback: number) => Number.isFinite(minutes) && minutes > 0 ? Math.min(2147483647, Math.max(60000, minutes * 60000)) : fallback * 60000
-  const checkDelay = delay(cfg.verifyInterval, 15), syncDelay = delay(cfg.syncInterval, 120)
+  const checkDelay = delay(cfg.verifyInterval, 5), syncDelay = delay(cfg.syncInterval, 60)
   nextScheduledCheck = Date.now() + checkDelay
   nextScheduledSync = Date.now() + syncDelay
   verifyTimer = setInterval(() => { nextScheduledCheck = Date.now() + checkDelay; void verifyPending() }, checkDelay)

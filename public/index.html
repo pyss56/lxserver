@@ -2828,15 +2828,15 @@
                                             <div class="config-field"><label
                                                     class="config-label"><span>自动备份与缓存同步间隔（分钟）</span></label><input
                                                     type="number" name="openlist.syncInterval"
-                                                    class="form-input config-input" value="120" min="1" /><small
-                                                    class="config-hint">按已保存的范围备份数据（本地 → 云端），并检查高级播放缓存规则。配置保存、文件落盘等事件另有 5 分钟最小间隔，避免密集改动触发全盘扫描。</small></div>
+                                                    class="form-input config-input" value="60" min="1" /><small
+                                                    class="config-hint">按已保存的范围备份数据（本地 → 云端），并检查高级播放缓存规则。</small></div>
                                             <div class="config-field"><label
                                                     class="config-label"><span>后台检查与失败重试间隔（分钟）</span><span
                                                         class="help-icon" role="button" tabindex="0"
                                                         onclick="app.toggleHelp(this)"
-                                                        data-help="定期查询云端文件是否存在、大小是否一致，不下载正文；同时重试失败任务。已验证记录不会每轮逐行探测，仅在基线变化、状态异常或每小时兜底核对时查询。选择上传后删除本地缓存时，内容校验通过才删除本地文件。">?</span></label><input
+                                                        data-help="定期查询云端文件是否存在、大小是否一致，不下载正文；同时重试失败任务。选择上传后删除本地缓存时，内容校验通过才删除本地文件。">?</span></label><input
                                                     type="number" name="openlist.verifyInterval"
-                                                    class="form-input config-input" value="15" min="1" /></div>
+                                                    class="form-input config-input" value="5" min="1" /></div>
                                         </div>
                                         <div class="config-field"><label class="config-label">云端历史版本保留天数</label><input
                                                 type="number" name="openlist.historyRetentionDays"

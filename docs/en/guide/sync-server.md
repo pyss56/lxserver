@@ -126,8 +126,8 @@ The cost comes mainly from "one remote probe plus one full-file SHA-256 per regi
 
 | Mechanism | Default behavior |
 | --- | --- |
-| Scheduled full sync | `openlist.syncInterval = 120` minutes |
-| Background status check | `openlist.verifyInterval = 15` minutes |
+| Scheduled full sync | `openlist.syncInterval = 60` minutes |
+| Background status check | `openlist.verifyInterval = 5` minutes |
 | Event-driven sync | Config saves and audio/snapshot writes only set a dirty flag and are merged; at least 5 minutes between event-triggered syncs. Manual and scheduled syncs bypass the throttle |
 | Verified rows | No per-row `getFileInfo` on normal rounds; rechecked only on a baseline change, abnormal state, pending `upload-delete` cleanup, or the hourly fallback |
 | Local content hash | One SHA-256 per file per sync round; always recomputed across rounds, so same-size edits with a restored mtime are still detected |
