@@ -117,6 +117,24 @@ Concurrency protection: renaming touches the cloud, then the local disk, then th
 
 User sync and automatic downloads are separate. Account download permission, playlist selection and quality settings determine what is downloaded; enabling LX sync alone does not download every track.
 
+The recovery manifest `_system/recovery/latest.json` is an **overall snapshot, not a per-record backup**: at the end of a full sync a local content fingerprint is compared with the last cloud copy; identical means zero writes, zero object probes and zero history traversal. Only changed content adds hash-addressed objects plus two small JSON files (`history/`, `latest.json`). Audio files are immutable and independent — uploaded once, never re-sent because of a manifest publish. Playlists, config and databases are cumulative/mutable, so their history versions are content-deduplicated and pruned by the configured retention days.
+
+### Sync cost and tuning
+
+The cost comes mainly from "one remote probe plus one full-file SHA-256 per registered row, every round", not from uploaded bytes. Defaults now keep it bounded:
+
+| Mechanism | Default behavior |
+| --- | --- |
+| Scheduled full sync | `openlist.syncInterval = 120` minutes |
+| Background status check | `openlist.verifyInterval = 15` minutes |
+| Event-driven sync | Config saves and audio/snapshot writes only set a dirty flag and are merged; at least 5 minutes between event-triggered syncs. Manual and scheduled syncs bypass the throttle |
+| Verified rows | No per-row `getFileInfo` on normal rounds; rechecked only on a baseline change, abnormal state, pending `upload-delete` cleanup, or the hourly fallback |
+| Local content hash | One SHA-256 per file per sync round; always recomputed across rounds, so same-size edits with a restored mtime are still detected |
+
+`openlist-backup.db` (with its WAL/SHM files) is runtime state and is **never uploaded** to OpenList. After losing the database, recovery relies on the cloud manifest and its content-addressed objects.
+
+To reduce cost further, tune config before changing code: raise `openlist.verifyInterval` and `openlist.syncInterval`, narrow `backup.openlist.types` to the needed `snapshots` / `system` types, and lower `configBackup.retentionDays` to shrink config-history listing. The trade-off is longer cloud visibility delay. Do not switch to per-record immediate uploads, and there is no need to lower the manifest publish frequency — unchanged content means zero writes and zero object probes.
+
 ## File manager
 
 The console uses VueFinder with virtual roots `root://` (working directory) and `data://` (data). It supports upload, rename, copy/move, delete, text editing and ZIP archive/extraction. APIs require administrator authentication; media preview can use a dedicated temporary media session.

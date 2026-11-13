@@ -205,8 +205,8 @@ These are configuration keys, **not automatically supported uppercase environmen
 | `openlist.username`, `openlist.password` | `''` | Login credentials when not using a token |
 | `openlist.root` | `'/lx_music'` | Path within an existing OpenList mount, not a physical disk path |
 | `openlist.externalUrl` | `''` | External address; empty uses endpoint |
-| `openlist.syncInterval` | `60` | Backup/cache-rule check interval, minutes |
-| `openlist.verifyInterval` | `5` | Background status check interval, minutes; not scheduled full-body SHA-256 verification |
+| `openlist.syncInterval` | `120` | Backup/cache-rule check interval, minutes. Event-driven sync additionally has a 5-minute minimum interval |
+| `openlist.verifyInterval` | `15` | Background status check interval, minutes; not scheduled full-body SHA-256 verification. Verified rows are not probed individually on every round |
 | `openlist.historyRetentionDays` | `7` | Cloud history retention, days |
 | `openlist.userBackups` | `'[]'` | Advanced user cache rules as a JSON-array string; edit through the UI |
 | `openlist.includeNonAudio` | `false` | Include existing cache lyrics/artwork; does not change ordinary music scope |

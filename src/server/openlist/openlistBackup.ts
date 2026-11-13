@@ -22,8 +22,10 @@ export function integrityStatus() {
   const context = integrityContext()
   return getIntegrityStatus(context.files, context.source)
 }
-import { metadataObservations, recordRemoteObservation, metadataStatus, startMetadata, cancelMetadata } from './openlistMetadata'
+import { metadataBaseline, metadataObservations, recordRemoteObservation, metadataStatus, startMetadata, cancelMetadata } from './openlistMetadata'
 import { isTaskRunning, runExclusive } from './openlistTaskLock'
+import { createLocalChangedChecker } from './openlistLocalChange'
+import { createSyncThrottle } from './openlistSyncThrottle'
 export { cancelMetadata }
 function metadataSource() { const cfg = getConfig(); return crypto.createHash('sha256').update(JSON.stringify([cfg.endpoint, cfg.root.replace(/\\/g, '/').replace(/\/+$/, '') || '/', cfg.username, cfg.token || cfg.password])).digest('hex') }
 let connectionSource = ''
@@ -175,6 +177,7 @@ import {
   linkAttachment,
   unlinkAttachment,
 } from './openlistBackupDb'
+import type { BackupStatus } from './openlistBackupDb'
 
 type SyncMode = 'upload-delete' | 'upload' | 'sync' | 'download'
 
@@ -182,6 +185,46 @@ type SyncMode = 'upload-delete' | 'upload' | 'sync' | 'download'
 const MAX_AUTO_RETRIES = 5
 /** 单次上传内置重试次数（覆盖网络抖动 / token 过期） */
 const UPLOAD_RETRY_TIMES = 3
+/** 事件驱动自动同步的最小间隔：密集落盘/保存合并成一次，避免连点即连传 */
+const EVENT_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
+
+/**
+ * 已验证记录的远端低频兜底核对周期。常态轮询不再逐行 getFileInfo，
+ * 但基线变化、状态异常、upload-delete 待清理或到达本周期时仍会核对。
+ */
+const VERIFIED_RECHECK_INTERVAL_MS = 60 * 60 * 1000
+
+const localChangeChecker = createLocalChangedChecker({
+  exists: p => fs.existsSync(p),
+  stat: p => fs.statSync(p),
+  hash: p => hashFile(p),
+  onBaseline: (row, size, mtimeMs) => setBackupStatus(row.id!, (row.status || 'verified') as BackupStatus, { size, localMtime: mtimeMs }),
+})
+
+const eventSyncThrottle = createSyncThrottle({
+  minIntervalMs: EVENT_SYNC_MIN_INTERVAL_MS,
+  now: () => Date.now(),
+  schedule: (fn, delayMs) => {
+    const timer = setTimeout(fn, delayMs)
+    timer.unref()
+    return timer
+  },
+  cancel: timer => clearTimeout(timer),
+  run: () => runSyncNow({}),
+  onError: error => console.warn('[OpenList] 事件同步失败:', (error as any)?.message || error),
+})
+
+/** 事件（配置保存 / 文件落盘 / 快照落盘）请求一次自动同步；密集事件会被合并节流。 */
+export function requestEventSync(): void {
+  if (!getConfig().enable) return
+  eventSyncThrottle.request()
+}
+
+/** 供状态面板或测试读取事件同步节流状态。 */
+export function getEventSyncState() { return eventSyncThrottle.state() }
+
+/** 停止调度器时一并清理挂起的事件同步，避免旧配置遗留的定时器。 */
+export function cancelEventSync(): void { eventSyncThrottle.cancel() }
 
 /**
  * 是否有会改动云端/本地/备份库的任务正在进行。
@@ -244,9 +287,9 @@ function getConfig(): BackupConfig {
     password: c['openlist.password'] || '',
     token: c['openlist.token'] || '',
     root: c['openlist.root'] || '/lx_music',
-    verifyInterval: Number(c['openlist.verifyInterval'] || 5),
+    verifyInterval: Number(c['openlist.verifyInterval'] || 15),
     includeNonAudio: c['openlist.includeNonAudio'] === true,
-    syncInterval: Number(c['openlist.syncInterval'] || 60),
+    syncInterval: Number(c['openlist.syncInterval'] || 120),
     externalUrl: normalizeTrailingSlash(String(c['openlist.externalUrl'] || c['openlist.endpoint'] || '')),
     backupSystemConfig: c['openlist.backupSystemConfig'] === true,
     signExpireHours: Number(c['openlist.signExpireHours'] ?? 6),
@@ -1145,7 +1188,16 @@ export async function verifyPending(): Promise<void> {
     const health = getOpenlistConnection()
     if (health.nextProbeAt > Date.now()) return
     if ((await probeOpenlistConnection()).state !== 'online') return
-    const rows = [...listBackupByStatus('completed'), ...listBackupByStatus('verified')]
+    // 常态轮询不再对每条已验证记录发一次 getFileInfo：只有待确认落库、基线变化、
+    // 异常状态、upload-delete 待清理，或到达低频兜底周期的记录才需要远端核对。
+    const needsRecheck = (row: any): boolean => {
+      if (row.status !== 'verified' || row.error) return true
+      if (effectiveModeFromRow(row, cfg) === 'upload-delete' && row.local_path && fs.existsSync(row.local_path)) return true
+      const observed = observations(row.remote_path, 'remote')
+      if (!observed || observed.state !== 'same' || observed.baseline !== metadataBaseline(row)) return true
+      return probeNow - (observed.checkedAt || 0) >= VERIFIED_RECHECK_INTERVAL_MS
+    }
+    const rows = [...listBackupByStatus('completed'), ...listBackupByStatus('verified')].filter(needsRecheck)
     for (const row of rows) {
       if (!rowEnabled(row, cfg) || enqueuedIds.has(`f:${row.id}`)) continue
       try {
@@ -1305,6 +1357,7 @@ export function startVerifyScheduler(): void {
 }
 
 export function stopVerifyScheduler(): void {
+  cancelEventSync()
   if (connectionTimer) clearInterval(connectionTimer)
   connectionTimer = null
   nextScheduledCheck = 0
@@ -1345,18 +1398,12 @@ function walkLocalAll(dir: string, map = new Map<string, string>(), root = dir):
   return map
 }
 
-function localChanged(row: any): boolean {
-  if (!fs.existsSync(row.local_path)) return false
-  const st = fs.statSync(row.local_path)
-  if (!row.local_hash) return row.size !== st.size || row.local_mtime == null || st.mtimeMs !== row.local_mtime
-  const changed = hashFile(row.local_path) !== row.local_hash
-  const after = fs.statSync(row.local_path)
-  if (after.size !== st.size || after.mtimeMs !== st.mtimeMs) return true
-  // 后台已确认内容相同，更新观察基线，避免仅 touch 后永久显示待上传。
-  if (!changed && row.id && (row.size !== st.size || row.local_mtime !== st.mtimeMs)) {
-    setBackupStatus(row.id, row.status, { size: st.size, localMtime: st.mtimeMs })
-  }
-  return changed
+/**
+ * 本地内容是否变化。一轮同步内同一路径只算一次 SHA-256（见 openlistLocalChange）；
+ * 跨轮一律重算，因此「同大小 + 恢复 mtime 的内容改写」仍能被检测到。
+ */
+function localChanged(row: any, useMemo = true): boolean {
+  return localChangeChecker.changed(row, useMemo)
 }
 
 async function downloadDirection(entry: UserBackupCfg, cl: OpenListClient, cfg: BackupConfig, folderType: 'cache' | 'music' | 'list', summary: SyncSummary): Promise<void> {
@@ -1691,6 +1738,10 @@ export function runSyncNow(opts: { user?: string; folder?: 'cache' | 'music' | '
 async function runSyncExclusive(opts: { user?: string; folder?: 'cache' | 'music' | 'list' }): Promise<SyncSummary> {
   while (syncJob) await syncJob.catch(() => {})
   const releaseBackup = beginCloudBackup()
+  // 本轮内同一本地路径的 SHA-256 只算一次；跨轮清空，保证内容改写仍能被检测。
+  localChangeChecker.beginRound()
+  // 全量同步（定时/手动/事件）统一更新事件节流基线；按 user/folder 过滤的同步不算。
+  if (!opts.user && !opts.folder) eventSyncThrottle.noteRun()
   const job = runSyncImpl(opts)
   syncJob = job
   try {
@@ -1700,7 +1751,11 @@ async function runSyncExclusive(opts: { user?: string; folder?: 'cache' | 'music
   } catch (error: any) {
     lastSyncResult = { at: Date.now(), uploaded: 0, downloaded: 0, deleted: 0, errors: [error.message] }
     throw error
-  } finally { if (syncJob === job) syncJob = null; releaseBackup() }
+  } finally {
+    localChangeChecker.endRound()
+    if (syncJob === job) syncJob = null
+    releaseBackup()
+  }
 }
 
 async function runSyncImpl(opts: { user?: string; folder?: 'cache' | 'music' | 'list' }): Promise<SyncSummary> {
@@ -1769,6 +1824,10 @@ async function runSyncImpl(opts: { user?: string; folder?: 'cache' | 'music' | '
       summary.errors.push('system-config-history: ' + (e?.message || e))
     }
   }
+  // 灾备清单是全量同步结束时生成的一份「整体快照」，不是逐条记录备份。
+  // publishRecoveryManifest 内部先算本地指纹：与云端上一份相同即零写入、零对象探测、零历史遍历；
+  // 只有内容变化时才补新增的按 hash 内容寻址对象并写 history + latest 两个小文件。
+  // 因此这里按同步周期调用不会随歌单/数据库累加数据线性增长开销；
   if (!summary.errors.length && !opts.user && !opts.folder) {
     try { await publishRecoveryManifest(cl) } catch (e: any) { summary.errors.push('recovery-manifest: ' + (e?.message || e)) }
   }

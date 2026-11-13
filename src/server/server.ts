@@ -38,7 +38,7 @@ import formidable from 'formidable'
 import musicSdkRaw from '@/modules/utils/musicSdk/index.js'
 const musicSdk = musicSdkRaw as any
 import { initUserApis, unloadUserApis, callUserApiGetMusicUrl, isSourceSupported, getLoadedApis, getLoadedApisCount } from './sources/userApi'
-import { startVerifyScheduler, runSyncNow, listBackups, startOpenlistMetadata, openlistMetadataStatus, cancelMetadata, retryBackup, deleteOpenlistBackups, registerFileCacheSyncHook, restoreOpenlistData, triggerBackfillUploadDelete } from '@/server/openlist/openlistBackup'
+import { startVerifyScheduler, runSyncNow, listBackups, startOpenlistMetadata, openlistMetadataStatus, cancelMetadata, retryBackup, deleteOpenlistBackups, registerFileCacheSyncHook, restoreOpenlistData, triggerBackfillUploadDelete, requestEventSync } from '@/server/openlist/openlistBackup'
 import { getOpenlistRecoveryHistory, startOpenlistRestore, listRestoreTasks, cancelRestoreTask, rollbackRestoreTask, deleteRestoreTask } from '@/server/openlist/openlistBackup'
 import { prepareOpenlistIntegrity, startOpenlistIntegrity, integrityStatus, cancelIntegrity } from '@/server/openlist/openlistBackup'
 import { planCacheRename, applyCacheRename } from '@/server/openlist/openlistRenameSync'
@@ -107,10 +107,8 @@ function scheduleOpenlistSync(): void {
   if (pendingOpenlistSyncTimer) clearTimeout(pendingOpenlistSyncTimer)
   pendingOpenlistSyncTimer = setTimeout(() => {
     pendingOpenlistSyncTimer = null
-    if (!global.lx.config['openlist.enable']) return
-    void runSyncNow({}).catch((e: any) => {
-      console.warn('[OpenList] 自动同步失败:', e?.message || e)
-    })
+    // 事件同步带最小间隔与脏标记合并；手动按钮与定时同步直接走 runSyncNow，不受节流。
+    requestEventSync()
   }, 8000)
 }
 import * as customSourceHandlers from './sources/customSourceHandlers'
