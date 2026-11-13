@@ -7582,9 +7582,8 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'subsonic.dislikeRequireSinger': global.lx.config['subsonic.dislikeRequireSinger'] ?? true,
             'subsonic.lyricTranslation': global.lx.config['subsonic.lyricTranslation'] ?? true,
             'subsonic.cacheOnPlay': global.lx.config['subsonic.cacheOnPlay'] ?? false,
-            // 兼容旧配置：原 detectDownload 只控制识别，现拆成「识别恒开 + saveDownload 控制是否留档」；
-            // 未显式配置时默认否（不占服务器空间/缓存/备份）。
-            'subsonic.saveDownload': global.lx.config['subsonic.saveDownload'] ?? (global.lx.config as any)['subsonic.detectDownload'] ?? false,
+            // 未显式配置时默认否：下载只投递给客户端，服务器不落盘、不占缓存、不触发备份。
+            'subsonic.saveDownload': global.lx.config['subsonic.saveDownload'] ?? false,
             'subsonic.playCacheFirst': global.lx.config['subsonic.playCacheFirst'] ?? false,
             'subsonic.playCacheFirstUseOpenlist': global.lx.config['subsonic.playCacheFirstUseOpenlist'] ?? false,
             'subsonic.openlistDelivery': global.lx.config['subsonic.openlistDelivery'] || 'direct',
