@@ -84,7 +84,6 @@ Cache cleanup applies only to `cache/` (including subdirectories), never to `mus
 
 `cache.unplayedMaxAgeDays` (default 7) applies a shorter retention to playback cache that was never played at all — preloaded, probed or streamed-but-never-played files — and evicts them first under size pressure. Any Subsonic scrobble (started or completed) marks the track as played and exempts it, so half-listened songs are not swept early. Users without playback history are unaffected. 0 disables it.
 
-
 Boolean values are case-insensitive: `true/1/yes/y/on` and `false/0/no/n/off`.
 
 `LX_USER_<username>` accepts a password string. Use user management for advanced account settings; JSON in that environment variable is not an advanced-account configuration format.
