@@ -1,0 +1,33 @@
+# fork 私有：本地 CodeRabbit CLI 预检配置，由 scripts/upstream_pr_precheck.py 使用。
+# 已登记进 scripts/upstream_pr.py 的 FORK_PRIVATE_PATTERNS，不会随上游 PR 提交。
+language: zh-CN
+
+reviews:
+  # 与上游 PR #508 的 Review profile（CHILL）保持一致，减少评审口径差异。
+  profile: chill
+
+  # 本地 CLI 比较的是 dev 相对 upstream/dev 的全量差异；排除 fork 私有文件后，
+  # 评审范围才与 scripts/upstream_pr.py 的白名单一致，避免大量无关意见。
+  path_filters:
+    - "**"
+    - "!.github/**"
+    - "!package.json"
+    - "!public/js/config.js"
+    - "!scripts/upstream_pr.py"
+    - "!scripts/upstream_pr_precheck.py"
+    - "!.coderabbit.yaml"
+    - "!start.bat"
+    - "!test/merge-hygiene.test.ts"
+    - "!test/fork-frontend-contract.test.cjs"
+
+  # 把 fork 历次上游评审反复踩到的坑固化为评审重点（PR #362 / #508 意见归纳）。
+  path_instructions:
+    - path: "src/**"
+      instructions: |
+        重点检查以下六类问题：
+        1. 编解码不对称：序列化 / 解析 / 删除必须复用同一个 canon 函数；字段含分隔符时 round-trip 必须成立。
+        2. 枚举与清单完整性：脱敏、白名单、denylist 要覆盖协议的全部认证方式（例如 Subsonic 的 token+salt 与明文密码）。
+        3. 循环内 I/O：需要遍历次数上限、单次超时、以及失败冷却 / 记忆，避免音源全挂时遍历整个媒体库。
+        4. 共享资源读-改-写串行化：同一文件或记录的多个 read→await→write 路径需互斥（per-user Promise 链）。
+        5. 配置漂移：存在 config key 时不得在代码里硬编码其默认值；新增配置需在 defaultConfig.ts 与 types/config.d.ts 同时声明。
+        6. 空集合传播：filter 可能返回空时下游要有语义正确的 fallback；禁止用 find() || list[0] 之类不相关结果兜底。
