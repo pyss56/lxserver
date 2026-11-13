@@ -145,7 +145,8 @@ export async function getOpenlistRecoveryHistory() {
   }
 }
 import { OpenListClient, OpenListNotFoundError } from './openlistClient'
-import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir, getIndexItemByFilename } from '@/server/music/fileCache'
+import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir, getIndexItemByFilename, getUserNamingPattern } from '@/server/music/fileCache'
+import { parseCloudFilename } from './openlistFilenameParser'
 import { callUserApiGetMusicUrl } from '@/server/sources/userApi'
 import { getUserDirname } from '@/user/data'
 import { getUserSpace } from '@/user'
@@ -613,8 +614,10 @@ function registerDownloadedCache(user: string, folderType: 'cache' | 'music', lo
   const row = getBackupByLocalPath(user, folderType, localPath)
   let metadata: any = {}
   try { metadata = JSON.parse(row?.cache_metadata || '{}') } catch { /* 旧记录无元数据 */ }
-  // 优先使用上传记录里的规范化歌曲 ID，避免以文件名生成的缓存键无法匹配
-  const id = (row && row.songmid) ? row.songmid : base.slice(0, Math.max(0, base.length - ext.length))
+  // 数据库/清单丢失时，按「该用户配置的命名模式」反解析文件名补出歌名、歌手、专辑、音质；
+  // 不硬编码任何命名格式，也不因为解析失败去改写文件名。
+  const parsed = parseCloudFilename(base, getUserNamingPattern(normalizeUser(user)))
+  const id = (row && row.songmid) ? row.songmid : (parsed.songId || base.slice(0, Math.max(0, base.length - ext.length)))
   let size = 0
   let mtime = Date.now()
   try {
@@ -626,20 +629,20 @@ function registerDownloadedCache(user: string, folderType: 'cache' | 'music', lo
     id,
     songmid: id,
     ...metadata,
-    name: metadata.name || id,
-    singer: metadata.singer || '',
-    album: metadata.album || '',
+    name: metadata.name || parsed.name || id,
+    singer: metadata.singer || parsed.singer || '',
+    album: metadata.album || parsed.album || '',
     albumId: metadata.albumId || '',
     img: metadata.img || '',
     interval: metadata.interval || 0,
-    // source 与 quality 均从 openlist_backup_files 回填（上传时已持久化原始音源平台与音质），
+    // source 与 quality 依次从上传记录、文件名解析回填；
     // 恢复后的缓存条目同时保留准确来源与音质，供按平台解析与精确音质检索的请求使用
-    source: row?.source || '',
+    source: row?.source || parsed.source || '',
     requestedSource: metadata.requestedSource || '',
     downloadSource: metadata.downloadSource || '',
     sourceName: metadata.sourceName || '',
     origin: 'openlist',
-    quality: row?.quality || 'unknown',
+    quality: row?.quality || parsed.quality || 'unknown',
     filename: path.relative(getCacheDir(user, folderType === 'music'), localPath).replace(/\\/g, '/'),
     folder: folderType,
     mtime,
@@ -1188,6 +1191,9 @@ export async function verifyPending(): Promise<void> {
     const health = getOpenlistConnection()
     if (health.nextProbeAt > Date.now()) return
     if ((await probeOpenlistConnection()).state !== 'online') return
+    const source = metadataSource()
+    const observations = metadataObservations(source)
+    const probeNow = Date.now()
     // 常态轮询不再对每条已验证记录发一次 getFileInfo：只有待确认落库、基线变化、
     // 异常状态、upload-delete 待清理，或到达低频兜底周期的记录才需要远端核对。
     const needsRecheck = (row: any): boolean => {
