@@ -144,6 +144,7 @@ export async function getOpenlistRecoveryHistory() {
     return { versions: [], tasks: listRestoreTasks(), warning: '云端历史暂不可用：' + error.message }
   }
 }
+
 import { OpenListClient, OpenListNotFoundError } from './openlistClient'
 import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir, getIndexItemByFilename, findCachedFilesBySongId, getUserNamingPattern } from '@/server/music/fileCache'
 import { parseCloudFilename } from './openlistFilenameParser'
@@ -191,7 +192,6 @@ const UPLOAD_RETRY_TIMES = 3
  * 只置脏标记，最多每 5 分钟合并成一次全量同步；定时与手动同步不受限制。
  */
 const EVENT_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
-
 /**
  * 已验证记录的远端低频兜底核对周期。常态轮询不再逐行 getFileInfo，
  * 但基线变化、状态异常、upload-delete 待清理或到达本周期时仍会核对。

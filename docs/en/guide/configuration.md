@@ -82,7 +82,6 @@ Defaults below refer to code defaults. Bundled configuration, saved values and i
 
 Cache cleanup applies only to `cache/` (including subdirectories), never to `music/`. Each user at each location (working directory and data directory) has an independent size quota. Cleanup runs after downloads, on startup, after changing cleanup settings, and every 12 hours. Oldest access/modification time is used; same-name audio and lyrics are grouped, active backups are protected, and indexes/partial files are excluded. Set `cache.maxAgeDays` in config.js or the admin UI (default 14); 0 disables expiration only, not size-based cleanup.
 
-
 `cache.unplayedMaxAgeDays` (default 7) applies a shorter retention to playback cache that was never played at all — preloaded, probed or streamed-but-never-played files — and evicts them first under size pressure. Any Subsonic scrobble (started or completed) marks the track as played and exempts it, so half-listened songs are not swept early. Users without playback history are unaffected. 0 disables it.
 
 Boolean values are case-insensitive: `true/1/yes/y/on` and `false/0/no/n/off`.
