@@ -29,7 +29,7 @@ import { scopeDislikeRules, parseDislikeRules, splitSingers } from '@/modules/di
 import { encodeAlbumRule } from '@/modules/dislike/utils'
 import { normalizeText } from '@/server/utils/songVersion'
 import { invalidateDislikeCache } from '@/server/utils/dislikeCache'
-import { invalidateSubsonicPlaylistCache, syncRatingsToDislike, syncDislikesToRating, readSubsonicMeta } from '@/server/integrations/subsonic'
+import { invalidateSubsonicPlaylistCache, syncRatingsToDislike, syncDislikesToRating, readSubsonicMeta, readScrobbles } from '@/server/integrations/subsonic'
 import { exportRatingBackup, createRatingSnapshot, saveRatingImport, listRatingSnapshots, readRatingSnapshot, restoreRatingSnapshot, deleteRatingSnapshot, normalizeRatingMeta, isValidSnapshotId } from './rating/ratingSnapshot'
 import { createMsg2call } from 'message2call'
 import { handleFileManager } from './integrations/fileManager'
@@ -9751,6 +9751,19 @@ export const removeDevice = async (userName: string, clientId: string) => {
   }
   const userSpace = getUserSpace(userName)
   await userSpace.removeDevice(clientId)
+}
+
+// 缓存滚动清理需要知道哪些播放缓存「从未播放」，据此提前淘汰预加载/试听文件。
+// 由 subsonic 播放历史提供（起播与完成都算播放过，避免误删听了半首的歌），fileCache 侧通过钩子读取，避免循环依赖。
+;(global.lx as any).getPlayedSongIds = (username: string) => {
+  try {
+    const list = readScrobbles(username)
+    // 没有任何播放记录时返回 null：说明该用户不走 Subsonic 播放上报，不据此加速清理
+    if (!list.length) return null
+    return new Set(list.map(entry => entry.id))
+  } catch {
+    return null
+  }
 }
 
 // Cache-only expiration and size sweeps share backup and index protection.

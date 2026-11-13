@@ -150,6 +150,12 @@ declare namespace LX {
     'cache.maxAgeDays'?: number
 
     /**
+     * 未完成播放的播放缓存（预加载、试听、只拉流未播完）的保留天数。
+     * 这类文件优先滚动清理，避免占满缓存空间；0 表示不额外加速清理，仍按 cache.maxAgeDays 处理。
+     */
+    'cache.unplayedMaxAgeDays'?: number
+
+    /**
      * 公共最大备份快照数
      */
     maxSnapshotNum: number

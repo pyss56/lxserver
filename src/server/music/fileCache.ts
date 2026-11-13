@@ -3273,16 +3273,38 @@ const runUserCacheCleanup = async (username: string, location: string, directory
     const days = Number(config['cache.maxAgeDays'] ?? 14)
     const limitBytes = config['user.enableCacheSizeLimit'] && Number.isFinite(limit) && limit > 0 ? limit * 1024 * 1024 : undefined
     const retentionMs = expire && Number.isFinite(days) && days > 0 ? days * 86400000 : undefined
+    // 未完成播放的播放缓存（预加载/试听）用更短的保留期，优先滚动清理
+    const unplayedDays = Number(config['cache.unplayedMaxAgeDays'] ?? 7)
+    const unplayedRetentionMs = retentionMs !== undefined && Number.isFinite(unplayedDays) && unplayedDays > 0
+        ? unplayedDays * 86400000
+        : undefined
     if (limitBytes === undefined && retentionMs === undefined) return
     const lx = (globalThis as any).lx
     const getProtectedPaths = () => {
         const activePaths: Set<string> = lx.getActiveBackupLocalPaths?.() || new Set<string>()
         return new Set(Array.from(activePaths, file => path.resolve(file)))
     }
+    const unplayedPaths = new Set<string>()
+    if (unplayedRetentionMs !== undefined) {
+        try {
+            // 由 subsonic 播放历史提供（任意上报都算播放过）；没有历史（如纯 Web 使用）时返回 null，跳过加速清理
+            const playedIds: Set<string> | null = lx.getPlayedSongIds?.(username) ?? null
+            if (playedIds) {
+                for (const item of indexManager.getAll(username, 'cache', location)) {
+                    if (!item?.filename) continue
+                    if (playedIds.has(String(item.id || '')) || playedIds.has(normalizeSongId(item))) continue
+                    unplayedPaths.add(path.resolve(directory, item.filename))
+                }
+            }
+        } catch (error) {
+            console.warn('[文件缓存] 计算未播完缓存失败:', error)
+        }
+    }
     const deleted = new Set<string>()
     try {
         const result = await cleanupCacheDirectory(directory, {
-            limitBytes, retentionMs, protectedPaths: getProtectedPaths(), refreshProtectedPaths: getProtectedPaths,
+            limitBytes, retentionMs, unplayedPaths, unplayedRetentionMs,
+            protectedPaths: getProtectedPaths(), refreshProtectedPaths: getProtectedPaths,
             isProtected: file => cacheUsageGuard.protects(file),
             shouldStop: () => !!global.lx?.restoreMaintenance,
             onDeleted(file) {

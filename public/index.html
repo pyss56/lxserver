@@ -1217,6 +1217,15 @@
                                         启动、保存清理设置后及每12小时检查根目录与数据目录的 cache（含子目录），不清理 music 下载目录；音频与同名歌词一起处理，正在备份的文件跳过。<strong>设为 0 仅关闭按天清理，空间限制仍可清理缓存。</strong>
                                     </span>
                                 </div>
+                                <div class="config-field">
+                                    <label class="config-label">从未播放的缓存保留时间 (天)</label>
+                                    <input type="number" name="cache.unplayedMaxAgeDays" class="form-input config-input"
+                                        placeholder="默认 7" min="0" />
+                                    <span class="tone-secondary config-field-desc"
+                                        style="display:block;margin-top:4px;font-size:12px">
+                                        预加载、探测、只拉流从未播放的缓存按此天数优先淘汰，容量超限时也优先删除；听过半首的歌不算从未播放，不会被提前清理。需同时开启上面的按天清理；设为 0 关闭该加速清理。
+                                    </span>
+                                </div>
                                 <div class="config-divider"></div>
                                 <div class="config-toggle-row">
                                     <div class="config-toggle-info">

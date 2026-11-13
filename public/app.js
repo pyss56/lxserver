@@ -3019,6 +3019,9 @@ class App {
             if (form.elements['cache.maxAgeDays']) {
                 form.elements['cache.maxAgeDays'].value = config['cache.maxAgeDays'] ?? 14;
             }
+            if (form.elements['cache.unplayedMaxAgeDays']) {
+                form.elements['cache.unplayedMaxAgeDays'].value = config['cache.unplayedMaxAgeDays'] ?? 7;
+            }
             if (form.elements['system.allowUnsafeVM']) {
                 form.elements['system.allowUnsafeVM'].checked = config['system.allowUnsafeVM'] === true;
             }
@@ -3478,6 +3481,8 @@ class App {
         // 备份相关字段已迁移至「备份管理」独立表单，此处仅提交「系统配置」表单自身字段，避免 FormData 缺失导致覆盖为默认值或 false
         const rawMaxAge = formData.get('cache.maxAgeDays');
         const parsedMaxAge = rawMaxAge !== null && rawMaxAge !== '' ? parseInt(rawMaxAge, 10) : NaN;
+        const rawUnplayedMaxAge = formData.get('cache.unplayedMaxAgeDays');
+        const parsedUnplayedMaxAge = rawUnplayedMaxAge !== null && rawUnplayedMaxAge !== '' ? parseInt(rawUnplayedMaxAge, 10) : NaN;
         const config = {
             serverName: formData.get('serverName'),
             'debug.enabled': formData.get('debug.enabled') === 'on',
@@ -3509,6 +3514,7 @@ class App {
             'user.enableCacheSizeLimit': formData.get('user.enableCacheSizeLimit') === 'on',
             'user.cacheSizeLimit': parseInt(formData.get('user.cacheSizeLimit')) || 2000,
             ...(Number.isFinite(parsedMaxAge) ? { 'cache.maxAgeDays': Math.max(0, parsedMaxAge) } : {}),
+            ...(Number.isFinite(parsedUnplayedMaxAge) ? { 'cache.unplayedMaxAgeDays': Math.max(0, parsedUnplayedMaxAge) } : {}),
             'admin.password': formData.get('admin.password'),
             'player.name': (formData.get('player.name') || '').trim() || 'LX Music Web',
             'player.enableAuth': formData.get('player.enableAuth') === 'on',
