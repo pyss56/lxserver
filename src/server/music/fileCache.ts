@@ -35,23 +35,13 @@ import { formatPlayTime } from '../../utils/common'
 import { getUserSpace } from '../../user'
 
 // --- Cache Naming Patterns ---
-export const CACHE_NAMING_PATTERNS = {
-    STANDARD: 'standard',       // {Name}_-_{Singer}_-_{Source}_-_{ID}_-_{Quality}
-    SIMPLE: 'simple',            // {Name} - {Singer} - {Quality} - {Album}
-    SINGER_NAME_QUALITY_ALBUM: 'singer_name_quality_album', // {Singer} - {Name} - {Quality} - {Album}
-    SINGER_NAME: 'singer_name', // {Singer} - {Name}
-    NAME_SINGER: 'name_singer'  // {Name} - {Singer}
-}
+// 常量与归一化函数抽出到无副作用模块，便于灾备解析等只读工具按配置复用；
+// 这里原样重新导出，既有 import 路径与行为保持不变。
+import { CACHE_NAMING_PATTERNS, normalizeNamingPattern } from './cacheNamingPattern'
+export { CACHE_NAMING_PATTERNS, normalizeNamingPattern } from './cacheNamingPattern'
 
 let currentNamingPattern = CACHE_NAMING_PATTERNS.SIMPLE
 const userNamingPatternMap = new Map<string, string>()
-
-export const normalizeNamingPattern = (pattern: unknown) => {
-    if (Object.values(CACHE_NAMING_PATTERNS).includes(pattern as string)) {
-        return pattern as string
-    }
-    return CACHE_NAMING_PATTERNS.SIMPLE
-}
 
 export const setNamingPattern = (pattern: unknown) => {
     currentNamingPattern = normalizeNamingPattern(pattern)
