@@ -6368,6 +6368,21 @@ class SubsonicHandler {
         const id = params.get('id')
         if (!id) return this.sendError(res, 10, 'Required parameter is missing: id', format)
 
+        // [下载识别] 部分客户端（如 Substreamer）的「下载」不调用 /rest/download，而是用裸 OkHttp
+        // 直接拉 stream：UA=okhttp/x.y.z + Accept-Encoding: gzip；播放则走应用自身 HTTP 栈
+        // （UA 带应用名，音流是空 UA + gzip/br），因此不会被误判。识别是内建能力，不设开关；
+        // 是否把文件保存到服务器由 subsonic.saveDownload 决定（默认否）。
+        const downloadUa = String(req.headers['user-agent'] || '')
+        const downloadEnc = String(req.headers['accept-encoding'] || '')
+        const downloadLike = method === 'download' || (
+            /^okhttp\//i.test(downloadUa) &&
+            /\bgzip\b/i.test(downloadEnc)
+        )
+        const saveDownload = global.lx.config['subsonic.saveDownload'] === true
+        if (downloadLike && method !== 'download') {
+            subsonicLog.info(`[Subsonic] 识别为下载请求(stream): ${id} (ua=${downloadUa || '-'}, save=${saveDownload})`)
+        }
+
         // 解析 source 和 songmid
         let source = ''
         let songmid = ''
@@ -6784,20 +6799,26 @@ class SubsonicHandler {
                 //   回源可能把 320k 降级成 192k；若按 result.quality 落盘，本地探测候选(由全局
                 //   subsonic.quality.priority 与请求音质组成)永远不含该实际音质，后续播放无法命中缓存。
                 //   改用请求音质作缓存键后，它天然落在探测候选内，「下载即缓存」才真正成立。
-                // - 下载(download)无论 cacheOnPlay 是否开启都强制落盘；但与可取消的「播放预缓存」分开管理：
-                //   播放预缓存进 subsonicActiveTasks 单用户可取消槽(切歌自动 abort 上一首)，避免连切刷歌堆积带宽；
-                //   下载缓存进独立任务(不进该槽、不被后续下载 abort)，否则连续下载第二首会中断第一首的落盘。
-                if (method === 'download') {
-                    // 下载即缓存：独立任务，强制落盘；不设 abort 槽位，确保批量连续下载每首都能完整写入
-                    void downloadAndCache(musicInfo, result.url, quality, username, undefined, false, true, true, {
-                        requestedSource: source,
-                        downloadSource: source,
-                        sourceName: source,
-                    }).catch((err: any) => {
-                        if (err?.message !== 'Aborted') {
-                            subsonicLog.error('[Subsonic] download cache failed:', err?.message || err)
-                        }
-                    })
+                // - 下载(download)与 cacheOnPlay 相互独立；是否保存到服务器由 subsonic.saveDownload 控制，
+                //   关闭时仍把音频投递给客户端，但既不落 music、也不退回播放预缓存（避免「关了还写 cache」）。
+                // - 落盘的下载与可取消的「播放预缓存」分开管理：播放预缓存进 subsonicActiveTasks
+                //   单用户可取消槽(切歌自动 abort 上一首)，避免连切刷歌堆积带宽；下载缓存进独立任务，
+                //   否则连续下载第二首会中断第一首的落盘。
+                if (downloadLike) {
+                    if (saveDownload) {
+                        // 显式下载与播放缓存分开存放：按 Web 端下载语义写入 music 下载目录，
+                        // 而不是 cache 播放缓存目录，避免被缓存滚动清理误删、也便于备份侧区分。
+                        // 独立任务，强制落盘；不设 abort 槽位，确保批量连续下载每首都能完整写入
+                        void downloadAndCache(musicInfo, result.url, quality, username, undefined, true, true, true, {
+                            requestedSource: source,
+                            downloadSource: source,
+                            sourceName: source,
+                        }).catch((err: any) => {
+                            if (err?.message !== 'Aborted') {
+                                subsonicLog.error('[Subsonic] download cache failed:', err?.message || err)
+                            }
+                        })
+                    }
                 } else if (global.lx.config['subsonic.cacheOnPlay'] && username) {
                     // 播放预缓存：可随切歌取消(避免连切刷歌堆积带宽)
                     if (global.lx.config['subsonic.enableDebug']) {

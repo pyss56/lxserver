@@ -1553,6 +1553,17 @@
                                     </div>
                                     <div class="config-toggle-row">
                                         <div class="config-toggle-info">
+                                            <span class="config-toggle-label">下载歌曲保存到服务器 <button type="button"
+                                                    class="help-icon" aria-label="查看帮助说明" onclick="app.toggleHelp(this)"
+                                                    data-help="默认关闭：下载只投递到客户端，服务器不占空间、不写缓存、不补传备份。开启后，服务器会自动识别下载请求（标准 /rest/download，以及部分客户端用裸 OkHttp 拉 stream 的下载），并把文件存入 music 下载目录而非 cache 播放缓存：不受缓存滚动清理影响，备份时也不受「仅播放过」限制。播放请求不会被误判为下载。">?</button></span>
+                                        </div>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" name="subsonic.saveDownload" />
+                                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                        </label>
+                                    </div>
+                                    <div class="config-toggle-row">
+                                        <div class="config-toggle-info">
                                             <span class="config-toggle-label">服务器存在缓存优先播放 <button type="button"
                                                     class="help-icon" aria-label="查看帮助说明" onclick="app.toggleHelp(this)"
                                                     data-help="在线歌曲：当前认证用户 music/cache（按音质及码率上限）→ 允许时 OpenList → 在线音源。关闭后在线 ID 跳过本地及 OpenList，但 local_ 本地曲库 ID 仍读取其文件。与播放时后台写入缓存独立。">?</button></span>

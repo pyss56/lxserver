@@ -474,6 +474,15 @@ declare namespace LX {
     'subsonic.cacheOnPlay'?: boolean
 
     /**
+     * Subsonic 下载请求是否保存到服务器 (默认 false)
+     * 下载请求的识别是内建能力：标准 /rest/download，以及部分客户端（如 Substreamer）
+     * 不走标准下载接口、而用裸 OkHttp 拉 stream（UA=okhttp/x.y.z + Accept-Encoding: gzip）。
+     * 识别结果一律落到 music 下载目录（与 cache 播放缓存分开）；本开关只决定是否保存：
+     * false 时仍正常把音频投递给客户端，但服务器不落盘、不触发播放预缓存、不补传备份。
+     */
+    'subsonic.saveDownload'?: boolean
+
+    /**
      * 是否在 Subsonic 播放音乐时优先使用本地缓存/下载文件直接流式传输 (默认 false)
      * 开启后,若服务器该用户目录下已存在此歌曲的缓存或下载文件,直接传输本地流,避免向源站请求在线直链;默认关闭以免服务器自担出向流量
      */

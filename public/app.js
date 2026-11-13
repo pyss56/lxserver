@@ -3693,6 +3693,9 @@ class App {
             if (form.elements['subsonic.cacheOnPlay']) {
                 form.elements['subsonic.cacheOnPlay'].checked = config['subsonic.cacheOnPlay'] === true;
             }
+            if (form.elements['subsonic.saveDownload']) {
+                form.elements['subsonic.saveDownload'].checked = config['subsonic.saveDownload'] === true;
+            }
             if (form.elements['subsonic.playCacheFirst']) {
                 form.elements['subsonic.playCacheFirst'].checked = config['subsonic.playCacheFirst'] === true;
             }
@@ -3788,6 +3791,7 @@ class App {
             'subsonic.sharedListSort': (formData.get('subsonic.sharedListSort') || '').trim() || 'hot',
             'subsonic.lyricTranslation': formData.get('subsonic.lyricTranslation') === 'on',
             'subsonic.cacheOnPlay': formData.get('subsonic.cacheOnPlay') === 'on',
+            'subsonic.saveDownload': formData.get('subsonic.saveDownload') === 'on',
             'subsonic.playCacheFirst': formData.get('subsonic.playCacheFirst') === 'on',
             'subsonic.playCacheFirstUseOpenlist': formData.get('subsonic.playCacheFirstUseOpenlist') === 'on',
             'subsonic.openlistDelivery': (formData.get('subsonic.openlistDelivery') || 'direct').trim(),
