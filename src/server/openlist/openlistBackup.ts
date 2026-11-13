@@ -23,9 +23,9 @@ export function integrityStatus() {
   return getIntegrityStatus(context.files, context.source)
 }
 import { metadataBaseline, metadataObservations, recordRemoteObservation, metadataStatus, startMetadata, cancelMetadata } from './openlistMetadata'
-import { isTaskRunning, runExclusive } from './openlistTaskLock'
 import { createLocalChangedChecker } from './openlistLocalChange'
 import { createSyncThrottle } from './openlistSyncThrottle'
+import { isTaskRunning, runExclusive } from './openlistTaskLock'
 export { cancelMetadata }
 function metadataSource() { const cfg = getConfig(); return crypto.createHash('sha256').update(JSON.stringify([cfg.endpoint, cfg.root.replace(/\\/g, '/').replace(/\/+$/, '') || '/', cfg.username, cfg.token || cfg.password])).digest('hex') }
 let connectionSource = ''
@@ -186,7 +186,10 @@ type SyncMode = 'upload-delete' | 'upload' | 'sync' | 'download'
 const MAX_AUTO_RETRIES = 5
 /** 单次上传内置重试次数（覆盖网络抖动 / token 过期） */
 const UPLOAD_RETRY_TIMES = 3
-/** 事件驱动自动同步的最小间隔：密集落盘/保存合并成一次，避免连点即连传 */
+/**
+ * 事件驱动同步的最小间隔：配置保存、音频落盘、歌单快照落盘等密集事件
+ * 只置脏标记，最多每 5 分钟合并成一次全量同步；定时与手动同步不受限制。
+ */
 const EVENT_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
 
 /**

@@ -40,8 +40,8 @@ const musicSdk = musicSdkRaw as any
 import { initUserApis, unloadUserApis, callUserApiGetMusicUrl, isSourceSupported, getLoadedApis, getLoadedApisCount } from './sources/userApi'
 import { startVerifyScheduler, runSyncNow, listBackups, startOpenlistMetadata, openlistMetadataStatus, cancelMetadata, retryBackup, deleteOpenlistBackups, registerFileCacheSyncHook, restoreOpenlistData, triggerBackfillUploadDelete, requestEventSync } from '@/server/openlist/openlistBackup'
 import { getOpenlistRecoveryHistory, startOpenlistRestore, listRestoreTasks, cancelRestoreTask, rollbackRestoreTask, deleteRestoreTask } from '@/server/openlist/openlistBackup'
-import { prepareOpenlistIntegrity, startOpenlistIntegrity, integrityStatus, cancelIntegrity } from '@/server/openlist/openlistBackup'
 import { planCacheRename, applyCacheRename } from '@/server/openlist/openlistRenameSync'
+import { prepareOpenlistIntegrity, startOpenlistIntegrity, integrityStatus, cancelIntegrity } from '@/server/openlist/openlistBackup'
 import { BACKUP_TYPE_INFO, getBackupTypes, normalizeBackupTypes, isCloudBackupRunning } from '@/utils/backupPolicy'
 import { OpenListClient } from '@/server/openlist/openlistClient'
 
