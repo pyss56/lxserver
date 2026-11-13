@@ -7588,8 +7588,8 @@ class App {
                 if (olForm.elements['openlist.token']) olForm.elements['openlist.token'].value = config['openlist.token'] || '';
                 if (olForm.elements['openlist.externalUrl']) olForm.elements['openlist.externalUrl'].value = config['openlist.externalUrl'] || '';
                 if (olForm.elements['openlist.root']) olForm.elements['openlist.root'].value = config['openlist.root'] || '/lx_music';
-                if (olForm.elements['openlist.syncInterval']) olForm.elements['openlist.syncInterval'].value = config['openlist.syncInterval'] || 60;
-                if (olForm.elements['openlist.verifyInterval']) olForm.elements['openlist.verifyInterval'].value = config['openlist.verifyInterval'] || 5;
+                if (olForm.elements['openlist.syncInterval']) olForm.elements['openlist.syncInterval'].value = config['openlist.syncInterval'] || 120;
+                if (olForm.elements['openlist.verifyInterval']) olForm.elements['openlist.verifyInterval'].value = config['openlist.verifyInterval'] || 15;
                 if (olForm.elements['openlist.historyRetentionDays']) olForm.elements['openlist.historyRetentionDays'].value = config['openlist.historyRetentionDays'] || 7;
                 this.toggleOpenlistVisibility();
             }
@@ -7700,8 +7700,8 @@ class App {
             'openlist.token': fd.get('openlist.token') || '',
             'openlist.externalUrl': (fd.get('openlist.externalUrl') || '').trim(),
             'openlist.root': (fd.get('openlist.root') || '').trim() || '/lx_music',
-            'openlist.syncInterval': Math.max(1, parseInt(fd.get('openlist.syncInterval'), 10) || 60),
-            'openlist.verifyInterval': Math.max(1, parseInt(fd.get('openlist.verifyInterval'), 10) || 5),
+            'openlist.syncInterval': Math.max(1, parseInt(fd.get('openlist.syncInterval'), 10) || 120),
+            'openlist.verifyInterval': Math.max(1, parseInt(fd.get('openlist.verifyInterval'), 10) || 15),
             'openlist.historyRetentionDays': Math.max(1, Math.min(3650, parseInt(fd.get('openlist.historyRetentionDays'), 10) || 7)),
         };
         try {
@@ -7911,7 +7911,7 @@ class App {
                     badgeCls: olEnabled ? (failedRows.length ? 'is-error' : (olHasUrl ? 'is-on' : 'is-warn')) : '',
                     last: runtime.openlist?.lastRun ? `${time(runtime.openlist.lastRun.at)} · 上传 ${runtime.openlist.lastRun.uploaded} / 下载 ${runtime.openlist.lastRun.downloaded} / 删除 ${runtime.openlist.lastRun.deleted} / 错误 ${runtime.openlist.lastRun.errors.length}` : latestTs ? `${time(latestTs)} · 文件记录更新（上传完成 ${completed} 项，非整轮执行结果）` : '暂无记录',
                     next: nextTime(runtime.openlist?.nextSyncAt),
-                    scope: `备份 ${cfg['openlist.syncInterval'] || 60} 分钟 / 检查 ${cfg['openlist.verifyInterval'] || 5} 分钟 · 已选 ${olTypesCount} 类数据`,
+                    scope: `备份 ${cfg['openlist.syncInterval'] || 120} 分钟 / 检查 ${cfg['openlist.verifyInterval'] || 15} 分钟 · 事件同步最小间隔 5 分钟 · 已选 ${olTypesCount} 类数据`,
                     error: failedRows.length ? `${failedRows.length} 个文件上传或校验失败（${failedRows[0].error || failedRows[0].name}）` : runtime.openlist?.lastRun?.errors?.join('；') || '当前无失败文件记录',
                 });
             } catch (err) {

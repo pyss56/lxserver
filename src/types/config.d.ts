@@ -579,9 +579,9 @@ declare namespace LX {
     'openlist.token'?: string
     /** OpenList 中 lx-music 备份根目录 */
     'openlist.root'?: string
-    /** 远端可用性校验周期(分钟) */
+    /** 远端可用性校验周期(分钟)，默认 15；已验证记录不逐轮探测 */
     'openlist.verifyInterval'?: number
-    /** 双向同步周期(分钟) */
+    /** 双向同步周期(分钟)，默认 120；事件同步另有 5 分钟最小间隔 */
     'openlist.syncInterval'?: number
     'openlist.historyRetentionDays'?: number
     /** 各用户备份目录配置(JSON 数组) */

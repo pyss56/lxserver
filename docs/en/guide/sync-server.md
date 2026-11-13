@@ -116,9 +116,9 @@ Concurrency protection: renaming touches the cloud, then the local disk, then th
 
 **Scope is audio plus its same-stem attachments only.** Playlists, dislike/rating snapshots (`snapshot_*.json`, `snapshotInfo.json`) and user settings are not renamed — their filenames are structural (derived from user and data type, not the song naming pattern) and their bodies store song IDs, not audio filenames. The only adjacent file that changes is `music_index.json` / `cache_index.json`: its `filename` / `lyricFilename` entries are rewritten and saved during the rename, so the next sync sees a content-hash change and re-uploads that one data file. If that backup type is not enabled, the cloud copy never existed.
 
-User sync and automatic downloads are separate. Account download permission, playlist selection and quality settings determine what is downloaded; enabling LX sync alone does not download every track.
-
 The recovery manifest `_system/recovery/latest.json` is an **overall snapshot, not a per-record backup**: at the end of a full sync a local content fingerprint is compared with the last cloud copy; identical means zero writes, zero object probes and zero history traversal. Only changed content adds hash-addressed objects plus two small JSON files (`history/`, `latest.json`). Audio files are immutable and independent — uploaded once, never re-sent because of a manifest publish. Playlists, config and databases are cumulative/mutable, so their history versions are content-deduplicated and pruned by the configured retention days.
+
+User sync and automatic downloads are separate. Account download permission, playlist selection and quality settings determine what is downloaded; enabling LX sync alone does not download every track.
 
 ### Sync cost and tuning
 

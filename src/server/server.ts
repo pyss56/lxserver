@@ -7611,7 +7611,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
             'openlist.token': global.lx.config['openlist.token'] || '',
             'openlist.root': global.lx.config['openlist.root'] || '/lx_music',
             'openlist.verifyInterval': global.lx.config['openlist.verifyInterval'] || 15,
-            'openlist.syncInterval': global.lx.config['openlist.syncInterval'] || 60,
+            'openlist.syncInterval': global.lx.config['openlist.syncInterval'] || 120,
             'openlist.historyRetentionDays': global.lx.config['openlist.historyRetentionDays'] || 7,
             'openlist.userBackups': global.lx.config['openlist.userBackups'] || '[]',
             'openlist.includeNonAudio': global.lx.config['openlist.includeNonAudio'] === true,
@@ -7812,7 +7812,7 @@ const handleStartServer = async (port = 9527, ip = '0.0.0.0') => await new Promi
               if (newConfig['openlist.token'] !== undefined) global.lx.config['openlist.token'] = newConfig['openlist.token']
               if (newConfig['openlist.root'] !== undefined) global.lx.config['openlist.root'] = newConfig['openlist.root']
               if (newConfig['openlist.verifyInterval'] !== undefined) global.lx.config['openlist.verifyInterval'] = parseInt(newConfig['openlist.verifyInterval']) || 15
-              if (newConfig['openlist.syncInterval'] !== undefined) global.lx.config['openlist.syncInterval'] = parseInt(newConfig['openlist.syncInterval']) || 60
+              if (newConfig['openlist.syncInterval'] !== undefined) global.lx.config['openlist.syncInterval'] = parseInt(newConfig['openlist.syncInterval']) || 120
               if (newConfig['openlist.historyRetentionDays'] !== undefined) global.lx.config['openlist.historyRetentionDays'] = Math.min(3650, Math.max(1, Math.floor(Number(newConfig['openlist.historyRetentionDays']) || 7)))
               if (newConfig['openlist.userBackups'] !== undefined) global.lx.config['openlist.userBackups'] = newConfig['openlist.userBackups']
               if (newConfig['openlist.includeNonAudio'] !== undefined) global.lx.config['openlist.includeNonAudio'] = newConfig['openlist.includeNonAudio']
