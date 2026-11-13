@@ -582,6 +582,10 @@ declare namespace LX {
     'openlist.userBackups'?: string
     /** 是否同步非音频文件(图片/封面等) */
     'openlist.includeNonAudio'?: boolean
+    /** 是否仅上传实际播放过的播放缓存（排除预加载、探测、只拉流未播放的文件）。仅作用于用户 cache 目录，不影响已下载歌曲 music 目录 */
+    'openlist.onlyPlayed'?: boolean
+    /** 严格模式：onlyPlayed 只认「完成播放」（Subsonic scrobble submission=true），"听一下就切走"不算播放。需同时开启 onlyPlayed */
+    'openlist.onlyPlayedCompleted'?: boolean
     /** OpenList 外网可访问地址(默认同 openlist.endpoint)。用于把网盘/代理直链回传给客户端；填写时结尾可带或不带斜杠，后台规范化 */
     'openlist.externalUrl'?: string
     /** OpenList /d/ 直链签名有效期(小时)，0 表示不过期。签名用站点令牌做 HMAC，令牌本身不会出现在 URL 里。默认 6 */

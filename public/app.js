@@ -7593,6 +7593,8 @@ class App {
             if (cacheForm && (forceDiscard || !dirty.has('openlist-cache-form'))) {
                 if (cacheForm.elements['openlist.playback.enable']) cacheForm.elements['openlist.playback.enable'].checked = config['openlist.playback.enable'] === true;
                 if (cacheForm.elements['openlist.includeNonAudio']) cacheForm.elements['openlist.includeNonAudio'].checked = config['openlist.includeNonAudio'] === true;
+                if (cacheForm.elements['openlist.onlyPlayed']) cacheForm.elements['openlist.onlyPlayed'].checked = config['openlist.onlyPlayed'] === true;
+                if (cacheForm.elements['openlist.onlyPlayedCompleted']) cacheForm.elements['openlist.onlyPlayedCompleted'].checked = config['openlist.onlyPlayedCompleted'] === true;
                 let users = [];
                 this._olbUsersLoaded = true;
                 try {
@@ -7726,6 +7728,8 @@ class App {
         const payload = {
             'openlist.playback.enable': fd.get('openlist.playback.enable') === 'on',
             'openlist.includeNonAudio': fd.get('openlist.includeNonAudio') === 'on',
+            'openlist.onlyPlayed': fd.get('openlist.onlyPlayed') === 'on',
+            'openlist.onlyPlayedCompleted': fd.get('openlist.onlyPlayedCompleted') === 'on',
             'openlist.userBackups': this._olbUsersLoaded ? userBackupsRaw : undefined,
         };
         try {

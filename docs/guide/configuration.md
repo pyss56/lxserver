@@ -231,6 +231,8 @@ npm run dev
 | `openlist.historyRetentionDays` | `7` | 云端历史版本保留天数 |
 | `openlist.userBackups` | `'[]'` | 高级按用户缓存规则，JSON 数组字符串；建议通过界面编辑 |
 | `openlist.includeNonAudio` | `false` | 高级缓存规则附带已有歌词与封面，不控制常规 music 备份 |
+| `openlist.onlyPlayed` | `false` | 高级缓存规则只上传服务端收到播放上报（Subsonic scrobble）的歌曲，排除预加载/探测落盘的文件；客户端手动「下载」的歌曲不受限制；只作用于用户 cache，不影响已下载 music 目录 |
+| `openlist.onlyPlayedCompleted` | `false` | 配合 `onlyPlayed` 的严格模式：只认完成播放（`submission=true`），"听一下就切走"不算；旧历史无完成标记时按未完成处理 |
 | `openlist.playback.enable` | `false` | 允许已登记 OpenList 文件参与播放回退，另需播放器/Subsonic 相应设置 |
 
 ```js

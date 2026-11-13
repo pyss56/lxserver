@@ -2927,6 +2927,26 @@
                                                 name="openlist.includeNonAudio" /><span class="toggle-track"><span
                                                     class="toggle-thumb"></span></span></label>
                                     </div>
+                                    <div class="config-toggle-row">
+                                        <div class="config-toggle-info"><span
+                                                class="config-toggle-label"><span>仅上传实际播放过的缓存（排除预加载）</span><span
+                                                    class="help-icon" role="button" tabindex="0"
+                                                    onclick="app.toggleHelp(this)"
+                                                    data-help="开启后，只有服务端收到播放上报（Subsonic scrobble）的歌曲，才会把播放缓存上传到 OpenList。预加载、探测、只拉流却未播放的文件会留在本地，不上传。客户端里手动点「下载」的歌曲视为明确留档，不受此限制。仅作用于用户 cache 播放缓存；已下载歌曲 music 目录与常规数据备份不受影响。播放后通常在下一次播放上报时立即补传，也可等定时同步。">?</span></span>
+                                        </div><label class="toggle-switch"><input type="checkbox"
+                                                name="openlist.onlyPlayed" /><span class="toggle-track"><span
+                                                    class="toggle-thumb"></span></span></label>
+                                    </div>
+                                    <div class="config-toggle-row">
+                                        <div class="config-toggle-info"><span
+                                                class="config-toggle-label"><span>仅上传「完整播放」的缓存（更严格）</span><span
+                                                    class="help-icon" role="button" tabindex="0"
+                                                    onclick="app.toggleHelp(this)"
+                                                    data-help="需同时开启上一项才生效。开启后只认客户端上报的「完成播放」（Subsonic scrobble submission=true）：点开听几秒就切走的歌曲不算播放过，不会上传。注意：历史记录里没有完成标记的老数据会被视为未完成；若客户端从不发送完成上报，则一首都不会上传。">?</span></span>
+                                        </div><label class="toggle-switch"><input type="checkbox"
+                                                name="openlist.onlyPlayedCompleted" /><span class="toggle-track"><span
+                                                    class="toggle-thumb"></span></span></label>
+                                    </div>
                                     <div class="config-divider"></div>
                                     <div class="bm-group-title">按用户播放缓存同步</div>
                                     <div class="config-field"><label class="config-label"><span>需要同步播放缓存的用户</span><span

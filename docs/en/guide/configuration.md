@@ -210,6 +210,8 @@ These are configuration keys, **not automatically supported uppercase environmen
 | `openlist.historyRetentionDays` | `7` | Cloud history retention, days |
 | `openlist.userBackups` | `'[]'` | Advanced user cache rules as a JSON-array string; edit through the UI |
 | `openlist.includeNonAudio` | `false` | Include existing cache lyrics/artwork; does not change ordinary music scope |
+| `openlist.onlyPlayed` | `false` | Upload only cache files the server saw a playback report for (Subsonic scrobble), excluding preloaded/probed files; explicit client downloads are never filtered; applies to user cache only, not the downloaded music folder |
+| `openlist.onlyPlayedCompleted` | `false` | Strict mode for `onlyPlayed`: only count completed playback (`submission=true`); brief previews do not qualify; legacy history without the flag counts as incomplete |
 | `openlist.playback.enable` | `false` | Allow registered OpenList files as playback fallback; player/Subsonic options also apply |
 
 ```js

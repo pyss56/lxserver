@@ -151,6 +151,8 @@ const config: LX.Config = {
   'openlist.historyRetentionDays': 7, // 云端历史版本保留天数
   'openlist.userBackups': '[]', // 各用户备份目录配置(JSON 数组)
   'openlist.includeNonAudio': false, // 是否同步非音频文件(图片/封面等)
+  'openlist.onlyPlayed': false, // 是否仅上传实际播放过的缓存（排除预加载/试听探测产生的文件）
+  'openlist.onlyPlayedCompleted': false, // 严格模式：只认「完成播放」（submission=true），"听一下就切走"不算
   'openlist.externalUrl': '', // OpenList 外网地址(留空则同 openlist.endpoint)
   'openlist.signExpireHours': 6, // OpenList /d/ 直链签名有效期(小时)，0=不过期
   'openlist.backupSystemConfig': false, // 是否把系统配置(config.js)同步备份到 OpenList

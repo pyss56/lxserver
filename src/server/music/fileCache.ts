@@ -253,6 +253,8 @@ export interface DownloadProvenance {
     requestedSource?: string
     downloadSource?: string
     sourceName?: string
+    /** 用户显式发起的下载（而非播放预加载/探测）。备份侧据此跳过「仅播放过才上传」的过滤。 */
+    explicitDownload?: boolean
 }
 
 class CacheIndexManager {
@@ -2716,7 +2718,7 @@ const downloadAndCacheImpl = async (songInfo: any, url: string, quality?: string
                     if (lxU?.fileCachedUploadListeners?.length) {
                         for (const fn of lxU.fileCachedUploadListeners) {
                             try {
-                                fn({ user: normalizedUsername, folderType, localPath: finalPath, meta: { source: metadata.source, songmid: id, quality: actualQuality, origin: 'platform' } })
+                                fn({ user: normalizedUsername, folderType, localPath: finalPath, meta: { source: metadata.source, songmid: id, quality: actualQuality, origin: 'platform', explicit: provenance.explicitDownload === true } })
                             } catch (e) {
                                 console.warn('[fileCache] fileCachedUpload listener error:', e)
                             }
@@ -3008,6 +3010,31 @@ export const getIndexItemByFilename = (filename: string, username: string) => {
 
 // [新增] 暴露 lyricFetcher 引用，供外部接口（如 embedLyric）使用
 export const getLyricFetcher = () => _lyricFetcher
+
+/**
+ * 按歌曲 ID 查找该用户已落盘的缓存/下载文件（cache 与 music 两个目录）。
+ * 用于「仅上传实际播放过的缓存」：播放上报到达后按 ID 反查本地文件再排队上传。
+ * 命中多个音质版本时会全部返回，由调用方决定上传哪些。
+ */
+export const findCachedFilesBySongId = (username: string, songId: string): Array<{ folder: 'cache' | 'music', localPath: string }> => {
+    const normalizedUsername = (username && username !== '_open' && username !== 'default') ? username : '_open'
+    const target = String(songId || '').trim()
+    if (!target || isRemasterStage(normalizedUsername)) return []
+    const result: Array<{ folder: 'cache' | 'music', localPath: string }> = []
+    for (const folder of ['cache', 'music'] as const) {
+        const dir = getCacheDir(normalizedUsername, folder === 'music')
+        for (const item of indexManager.getAll(normalizedUsername, folder)) {
+            if (normalizeSongId(item) !== target && String(item.songmid || '') !== target) continue
+            const localPath = path.join(dir, item.filename)
+            try {
+                if (fs.statSync(localPath).isFile()) result.push({ folder, localPath })
+            } catch {
+                // 索引残留但文件已被清理，忽略
+            }
+        }
+    }
+    return result
+}
 
 // [新增] 更新索引中指定文件的 hasEmbedLyric 状态（由 embedLyric 接口成功写入后调用）
 export const setIndexEmbedLyric = (

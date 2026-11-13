@@ -10,7 +10,7 @@ import { getUserSpace, getUserDirname, getUserConfig } from '@/user'
 import { createRatingSnapshot, withMetaLock } from '../rating/ratingSnapshot'
 import { callUserApiGetMusicUrl } from '@/server/sources/userApi'
 import { downloadAndCache, checkCache, serveCacheFile, getFileName, getCacheDir } from '@/server/music/fileCache'
-import { resolveOpenlistCacheEntry } from '@/server/openlist/openlistBackup'
+import { resolveOpenlistCacheEntry, onSongPlayed, onExplicitDownload } from '@/server/openlist/openlistBackup'
 import {
     getSingerPic, getSingerDetail, getSingerMid, nameSimilarity,
     resolveSingerSources, getOrderedSingerSources, normalizeName as normalizeSingerName,
@@ -508,6 +508,12 @@ export function writeSubsonicMeta(username: string, meta: SubsonicMeta) {
 export interface ScrobbleEntry {
     id: string
     time: number
+    /**
+     * 是否是「完成播放」上报（submission=true）。
+     * 起播上报（submission=false）不写该字段，因此旧记录天然表现为「未完成」。
+     * 备份侧可据此区分「听了一下」和「听完」，见 openlist.onlyPlayedCompleted。
+     */
+    completed?: boolean
 }
 
 /** 播放队列状态（savePlayQueue / getPlayQueue 跨设备续播用） */
@@ -6528,6 +6534,10 @@ class SubsonicHandler {
                 const dlName = `${id}.${dlExt}`
                 res.setHeader('Content-Disposition', `attachment; filename="${dlName}"; filename*=UTF-8''${encodeURIComponent(dlName)}`)
             }
+            if (downloadLike && saveDownload) {
+                // 显式下载视为明确留档：即使没有播放记录，也补传该曲已落盘的缓存（openlist.onlyPlayed 下同样生效）
+                try { onExplicitDownload(username, [String(id).replace(/^(al-|ar-|tr-|sg-|mg-)/, '')]) } catch { /* ignore */ }
+            }
 
             // 本地缓存优先播放：受 subsonic.playCacheFirst 开关控制(默认开启)。
             // 按确定性规则探测缓存(精确优先 + cap 内降序, 见 getCacheProbeOrder)，命中即直接回传本地文件；
@@ -6813,6 +6823,8 @@ class SubsonicHandler {
                             requestedSource: source,
                             downloadSource: source,
                             sourceName: source,
+                            // 用户显式下载视为明确留档：开启 openlist.onlyPlayed 时不受播放记录限制
+                            explicitDownload: true,
                         }).catch((err: any) => {
                             if (err?.message !== 'Aborted') {
                                 subsonicLog.error('[Subsonic] download cache failed:', err?.message || err)
@@ -7426,9 +7438,19 @@ class SubsonicHandler {
             ? (String(Math.floor(parsed)).length >= 13 ? parsed : parsed * 1000)
             : Date.now()
 
+        // [onlyPlayedCompleted] submission=true 表示「完成播放」，写进历史供备份侧区分
+        // 「听了一下就切走」和「完整播完」；起播(false)不写该字段
+        const submissionParam = params.get('submission')
+        const completed = submissionParam != null && /^(true|1)$/i.test(submissionParam)
+
         const list = readScrobbles(username)
-        for (const id of ids) list.push({ id, time: eventTime })
+        for (const id of ids) list.push(completed ? { id, time: eventTime, completed: true } : { id, time: eventTime })
         writeScrobbles(username, list)
+
+        // [onlyPlayed] 播放缓存落盘时可能因未播放被跳过，这里在收到播放上报后补传
+        try { onSongPlayed(username, ids) } catch (e: any) {
+            subsonicLog.warn('[Subsonic] 播放后触发 OpenList 补传失败:', e?.message || e)
+        }
 
         subsonicLog.debug(`[Subsonic] scrobble: ${ids.length} 首 (${ids.slice(0, 3).join(', ')}) time=${new Date(eventTime).toISOString()} (user=${username})`)
         return this.sendResponse(res, {}, format)

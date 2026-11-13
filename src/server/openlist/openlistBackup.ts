@@ -145,7 +145,7 @@ export async function getOpenlistRecoveryHistory() {
   }
 }
 import { OpenListClient, OpenListNotFoundError } from './openlistClient'
-import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir, getIndexItemByFilename, getUserNamingPattern } from '@/server/music/fileCache'
+import { registerOpenListCacheFile, unregisterOpenListCacheFile, getCacheDir, getIndexItemByFilename, findCachedFilesBySongId, getUserNamingPattern } from '@/server/music/fileCache'
 import { parseCloudFilename } from './openlistFilenameParser'
 import { callUserApiGetMusicUrl } from '@/server/sources/userApi'
 import { getUserDirname } from '@/user/data'
@@ -268,6 +268,10 @@ interface BackupConfig {
   root: string
   verifyInterval: number
   includeNonAudio: boolean
+  /** 仅上传实际播放过的播放缓存（排除预加载/探测文件） */
+  onlyPlayed: boolean
+  /** 严格模式：只认「完成播放」（submission=true），"听一下就切走"不算播放 */
+  onlyPlayedCompleted: boolean
   syncInterval: number
   externalUrl: string
   backupSystemConfig: boolean
@@ -290,6 +294,8 @@ function getConfig(): BackupConfig {
     root: c['openlist.root'] || '/lx_music',
     verifyInterval: Number(c['openlist.verifyInterval'] || 15),
     includeNonAudio: c['openlist.includeNonAudio'] === true,
+    onlyPlayed: c['openlist.onlyPlayed'] === true,
+    onlyPlayedCompleted: c['openlist.onlyPlayedCompleted'] === true,
     syncInterval: Number(c['openlist.syncInterval'] || 120),
     externalUrl: normalizeTrailingSlash(String(c['openlist.externalUrl'] || c['openlist.endpoint'] || '')),
     backupSystemConfig: c['openlist.backupSystemConfig'] === true,
@@ -1043,6 +1049,68 @@ function queueAttachmentsForFile(
   }
 }
 
+// ---------- 播放记录（决定是否上传「播放缓存」）----------
+
+/** 播放记录缓存，按「用户 + 判定模式」分别缓存，避免两种模式互相覆盖。 */
+const playedIdsCache = new Map<string, { key: string; ids: Set<string> }>()
+
+/** 服务端播放记录文件（Subsonic scrobble 历史），与 subsonic.ts 的落盘位置一致。 */
+function getScrobbleFilePath(user: string): string | null {
+  try {
+    return path.join(global.lx.userPath, getUserDirname(user), 'subsonic-scrobbles.json')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 读取该用户「服务端认为播放过」的歌曲 ID 集合。
+ * 只认 scrobble 上报：客户端预加载/探测只会发 stream，不会发 scrobble，因此可用来排除预加载。
+ * requireCompleted=true 时只统计 submission=true 的「听完」记录（旧记录没有 completed 字段，按未完成处理）。
+ * 按文件 mtime+size+模式缓存，避免每次落盘都解析整份历史。
+ */
+function readPlayedSongIds(user: string, requireCompleted: boolean): Set<string> {
+  const file = getScrobbleFilePath(user)
+  const cacheKey = `${user}:${requireCompleted ? 'completed' : 'any'}`
+  if (!file) return new Set()
+  try {
+    const st = fs.statSync(file)
+    const key = `${st.mtimeMs}:${st.size}`
+    const cached = playedIdsCache.get(cacheKey)
+    if (cached?.key === key) return cached.ids
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const ids = new Set<string>()
+    if (Array.isArray(raw)) {
+      for (const entry of raw) {
+        if (requireCompleted && entry?.completed !== true) continue
+        const id = String(entry?.id || '').trim()
+        if (id) ids.add(id)
+      }
+    }
+    playedIdsCache.set(cacheKey, { key, ids })
+    return ids
+  } catch {
+    return playedIdsCache.get(cacheKey)?.ids || new Set()
+  }
+}
+
+function isSongPlayed(user: string, ids: Array<string | null | undefined>, requireCompleted = false): boolean {
+  const played = readPlayedSongIds(user, requireCompleted)
+  if (!played.size) return false
+  for (const raw of ids) {
+    const id = String(raw || '').trim()
+    if (id && played.has(id)) return true
+  }
+  return false
+}
+
+/** onlyPlayed 只约束播放缓存（cache），已下载歌曲目录（music）与常规数据备份不受影响。 */
+function shouldSkipUnplayed(cfg: BackupConfig, user: string, folderType: 'cache' | 'music' | 'list', songId?: string | null, localPath?: string): boolean {
+  if (!cfg.onlyPlayed || folderType !== 'cache') return false
+  const item = localPath ? getIndexItemByFilename(path.basename(localPath), user) : null
+  return !isSongPlayed(user, [songId, item?.id, item?.songmid], cfg.onlyPlayedCompleted)
+}
+
 // ---------- 落盘钩子（事件驱动上传）----------
 
 /**
@@ -1053,7 +1121,7 @@ export function onFileCached(
   user: string,
   folderType: 'cache' | 'music',
   localPath: string,
-  meta: { source?: string; songmid?: string; quality?: string; origin?: 'openlist' | 'platform' | 'local' } = {},
+  meta: { source?: string; songmid?: string; quality?: string; origin?: 'openlist' | 'platform' | 'local'; explicit?: boolean } = {},
 ): void {
   const cfg = getConfig()
   if (!cfg.enable) return
@@ -1068,6 +1136,9 @@ export function onFileCached(
 
   const mode = effectiveMode(entry, cfg)
   if (mode === 'download') return
+  // [onlyPlayed] 预加载/探测落盘的文件先不排队，等客户端上报播放（scrobble）后由 onSongPlayed 补传。
+  // 用户在客户端显式点「下载」属于明确要留档，即使没有播放记录也照常上传。
+  if (!meta.explicit && shouldSkipUnplayed(cfg, user, folderType, meta.songmid, localPath)) return
 
   const cl = getClient()
   if (!cl) return
@@ -1077,7 +1148,7 @@ export function onFileCached(
   const remotePath = cl.resolveRemotePath(`${user}/${folderType}/${relative}`)
 
   const existing = getBackupByLocalPath(user, folderType, localPath)
-  if (existing && !existing.deleted_at && (['uploading', 'completed'].includes(existing.status) || (existing.status === 'verified' && !localChanged(existing)))) {
+  if (existing && !existing.deleted_at && (['uploading', 'completed'].includes(existing.status) || (existing.status === 'verified' && !localChanged(existing, false)))) {
     return
   }
 
@@ -1100,6 +1171,43 @@ export function onFileCached(
     queueAttachmentsForFile(user, folderType, localPath, row, dir, cl, cfg)
   }
   lazyStartScheduler()
+}
+
+/**
+ * 播放上报（Subsonic scrobble）到达后调用：把该曲已落盘的播放缓存排队上传。
+ * 仅在 openlist.onlyPlayed 开启时有实际动作——这些文件落盘时被跳过了。
+ * 幂等：已在队列或已上传的文件会被 onFileCached 内部的既有状态检查挡掉。
+ */
+export function onSongPlayed(user: string, songIds: string[]): void {
+  queueCachedUpload(user, songIds, false)
+}
+
+/**
+ * 用户显式点「下载」时调用：即便没有播放记录，也要把该曲的播放缓存留档到云端。
+ * 覆盖「文件早已落盘、当时被 onlyPlayed 跳过」的情况（命中缓存不会再触发落盘事件）。
+ */
+export function onExplicitDownload(user: string, songIds: string[]): void {
+  queueCachedUpload(user, songIds, true)
+}
+
+function queueCachedUpload(user: string, songIds: string[], explicit: boolean): void {
+  const cfg = getConfig()
+  if (!cfg.enable || !cfg.onlyPlayed || isCloudRestoreRunning()) return
+  const entry = cfg.userBackups.find(u => u.user === user && u.enabled)
+  if (!entry || effectiveMode(entry, cfg) === 'download') return
+  if (!folderEnabled(user, 'cache', cfg)) return
+  for (const raw of songIds) {
+    const id = String(raw || '').trim()
+    if (!id) continue
+    for (const file of findCachedFilesBySongId(user, id)) {
+      if (file.folder !== 'cache') continue
+      try {
+        onFileCached(user, file.folder, file.localPath, { songmid: id, explicit })
+      } catch (e: any) {
+        console.warn('[openlist-backup] 播放/下载后补传失败:', file.localPath, e?.message || e)
+      }
+    }
+  }
 }
 
 /**
@@ -1126,6 +1234,8 @@ export async function triggerBackfillUploadDelete(user: string): Promise<void> {
     for (const localPath of locals) {
       const existing = getBackupByLocalPath(user, folderType, localPath)
       if (existing && enqueuedIds.has(`f:${existing.id}`)) continue
+      // [onlyPlayed] 回填迁移同样只处理播放过的缓存，避免把预加载文件批量搬上云
+      if (shouldSkipUnplayed(cfg, user, folderType, existing?.songmid, localPath)) continue
       const relative = path.relative(dir, localPath).replace(/\\/g, '/')
       const remotePath = cl.resolveRemotePath(`${user}/${folderType}/${relative}`)
       const item = getIndexItemByFilename(path.basename(localPath), user)
@@ -1479,7 +1589,10 @@ async function uploadDirection(entry: UserBackupCfg, cl: OpenListClient, cfg: Ba
     if (existing?.status === 'completed' && existing.remote_path === remotePath && !localChanged(existing) && await remoteMatchesBackup(cl, existing, remotePath)) continue
     if (existing?.status === 'failed' && existing.retry_count >= MAX_AUTO_RETRIES && existing.remote_path === remotePath) continue
     const unchanged = existing?.status === 'verified' && !localChanged(existing) && existing.remote_path === remotePath && await remoteMatchesBackup(cl, existing, remotePath)
-    const item = getIndexItemByFilename(path.basename(lp), entry.user)
+    // 缓存条目带子目录时 filename 是相对路径，优先按相对路径匹配，回退到文件名
+    const item = getIndexItemByFilename(rel, entry.user) || getIndexItemByFilename(path.basename(lp), entry.user)
+    // [onlyPlayed] 定时/手动全量同步也只上传播放过的缓存，避免预加载文件被顺带推上云
+    if (cfg.onlyPlayed && folderType === 'cache' && !isSongPlayed(entry.user, [item?.id, item?.songmid, existing?.songmid], cfg.onlyPlayedCompleted)) continue
     let row = existing
     if (!unchanged) {
       row = upsertBackupFile({
