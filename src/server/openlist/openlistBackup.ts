@@ -295,11 +295,11 @@ function getConfig(): BackupConfig {
     password: c['openlist.password'] || '',
     token: c['openlist.token'] || '',
     root: c['openlist.root'] || '/lx_music',
-    verifyInterval: Number(c['openlist.verifyInterval'] || 15),
+    verifyInterval: Number(c['openlist.verifyInterval'] || 5),
     includeNonAudio: c['openlist.includeNonAudio'] === true,
     onlyPlayed: c['openlist.onlyPlayed'] === true,
     onlyPlayedCompleted: c['openlist.onlyPlayedCompleted'] === true,
-    syncInterval: Number(c['openlist.syncInterval'] || 120),
+    syncInterval: Number(c['openlist.syncInterval'] || 60),
     externalUrl: normalizeTrailingSlash(String(c['openlist.externalUrl'] || c['openlist.endpoint'] || '')),
     backupSystemConfig: c['openlist.backupSystemConfig'] === true,
     signExpireHours: Number(c['openlist.signExpireHours'] ?? 6),
@@ -423,6 +423,27 @@ function folderEnabled(user: string, folder: string, cfg = getConfig()): boolean
   return folder === 'cache' ? ((global.lx.config as any)['backup.openlist.types'] !== undefined ? entry.backupCache === true : entry.backupCache !== false) : folder === 'music' ? entry.backupDownload !== false : entry.backupSnapshot !== false
 }
 
+/**
+ * 统一数据备份模式（backup.openlist.types 已定义）下，仍按「用户目录」上传的文件夹：
+ * - cache 始终沿用 backupCache 开关；
+ * - music 仅在备份类型勾选 music 时启用，否则只备份统一媒体库（data/music），避免误把用户下载目录搬上云。
+ * 未定义 types 时走旧模型，cache 与 music 都参与。
+ */
+function userFolderSyncEnabled(folderType: 'cache' | 'music'): boolean {
+  if ((global.lx.config as any)['backup.openlist.types'] === undefined) return true
+  if (folderType === 'cache') return true
+  return getBackupTypes('openlist', global.lx.config as any).includes('music')
+}
+
+/**
+ * 统一数据备份模式下，用户音乐目录若位于 dataPath/music 内，已由统一备份覆盖，不能再按用户目录重复上传一份。
+ * 旧模型（未定义 backup.openlist.types）不做此跳过，否则 dataPath 与音乐根重合的部署会完全不上传音乐。
+ */
+function musicDirCoveredByDataBackup(dir: string): boolean {
+  if ((global.lx.config as any)['backup.openlist.types'] === undefined) return false
+  return isSubPath(path.resolve(dir), path.resolve(global.lx.dataPath, 'music'))
+}
+
 function rowEnabled(row: any, cfg = getConfig()): boolean {
   if (row.folder_type === 'data') {
     const relative = row.remote_path.split('/_data/')[1]
@@ -432,8 +453,9 @@ function rowEnabled(row: any, cfg = getConfig()): boolean {
   if (row.folder_type === 'list') {
     return cfg.enable && ((global.lx.config as any)['backup.openlist.types'] === undefined || getBackupTypes('openlist', global.lx.config as any).includes('snapshots'))
   }
-  // 启用统一数据备份后，不再执行旧音乐/快照记录的上传即删策略。
-  if ((global.lx.config as any)['backup.openlist.types'] !== undefined && row.folder_type !== 'cache') return false
+  // 启用统一数据备份后，data/system 只走统一备份；cache 与勾选了 music 的用户下载目录仍走上传即删策略。
+  if ((global.lx.config as any)['backup.openlist.types'] !== undefined && row.folder_type !== 'cache'
+    && !(row.folder_type === 'music' && userFolderSyncEnabled('music'))) return false
   return cfg.enable && folderEnabled(row.user, row.folder_type, cfg)
 }
 
@@ -1128,7 +1150,7 @@ export function onFileCached(
 ): void {
   const cfg = getConfig()
   if (!cfg.enable) return
-  if ((global.lx.config as any)['backup.openlist.types'] !== undefined && folderType === 'music') return
+  if (folderType === 'music' && !userFolderSyncEnabled('music')) return
   if (!folderEnabled(user, folderType, cfg)) return
   // 来自 OpenList 回写的文件（独立字段 origin='openlist'）禁止再次回推，杜绝回写环路
   if (meta.origin === 'openlist') return
@@ -1136,6 +1158,7 @@ export function onFileCached(
   if (!entry) return
   const dir = resolveUserDir(entry, folderType, cfg)
   if (!dir || !isSubPath(localPath, dir)) return
+  if (folderType === 'music' && musicDirCoveredByDataBackup(dir)) return
 
   const mode = effectiveMode(entry, cfg)
   if (mode === 'download') return
@@ -1229,10 +1252,11 @@ export async function triggerBackfillUploadDelete(user: string): Promise<void> {
 
   const folders: Array<'cache' | 'music'> = ['cache', 'music']
   for (const folderType of folders) {
-    if (folderType === 'music' && (global.lx.config as any)['backup.openlist.types'] !== undefined) continue
+    if (!userFolderSyncEnabled(folderType)) continue
     if (!folderEnabled(user, folderType, cfg)) continue
     const dir = resolveUserDir(entry, folderType, cfg)
     if (!dir || !fs.existsSync(dir)) continue
+    if (folderType === 'music' && musicDirCoveredByDataBackup(dir)) continue
     const locals = walkLocal(dir, folderType)
     for (const localPath of locals) {
       const existing = getBackupByLocalPath(user, folderType, localPath)
@@ -1903,11 +1927,12 @@ async function runSyncImpl(opts: { user?: string; folder?: 'cache' | 'music' | '
     if (!entry.enabled) continue
     if (opts.user && entry.user !== opts.user) continue
     const mode = effectiveMode(entry, cfg)
-    const folders: Array<'cache' | 'music'> = opts.folder && opts.folder !== 'list' ? [opts.folder] : (selectedData ? ['cache'] : ['cache', 'music'])
+    const folders: Array<'cache' | 'music'> = opts.folder && opts.folder !== 'list' ? [opts.folder] : (userFolderSyncEnabled('music') ? ['cache', 'music'] : ['cache'])
     for (const ft of folders) {
-      if (selectedData && ft !== 'cache') continue
+      if (!userFolderSyncEnabled(ft)) continue
       const dir = resolveUserDir(entry, ft, cfg)
       if (!dir) continue
+      if (ft === 'music' && musicDirCoveredByDataBackup(dir)) continue
       try {
         if (mode === 'sync') await deletionDetection(entry, cl, cfg, ft, summary)
         if (mode === 'download' || mode === 'sync') await downloadDirection(entry, cl, cfg, ft, summary)

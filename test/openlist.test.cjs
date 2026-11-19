@@ -457,13 +457,36 @@ test('OpenList backup, restore and synchronization against an HTTP storage serve
     assert.equal(fs.readdirSync(state.dirs.cache).filter(p => p.endsWith('.oltmp')).length, 0)
   })
 
-  await t.test('enabling data backup never runs an old music upload-delete rule', async () => {
+  await t.test('selected music type runs upload-delete for the user music directory outside dataPath', async () => {
     reset(); rule.mode = 'upload-delete'
-    const local = putLocal('music')
-    await sync('music')
     config['backup.openlist.types'] = ['music']
-    await api.verifyPending()
-    assert.equal(fs.readFileSync(local, 'utf8'), 'original')
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'lx-openlist-outside-music-'))
+    state.dirs.music = outside
+    try {
+      const local = putLocal('music')
+      await sync('music'); await api.verifyPending()
+      assert.ok(remote.has('/root/alice/music/song.mp3'))
+      assert.equal(fs.existsSync(local), false)
+    } finally {
+      state.dirs.music = path.join(temp, 'music')
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  await t.test('omitting the music type keeps the user music directory local', async () => {
+    reset(); rule.mode = 'upload-delete'
+    config['backup.openlist.types'] = ['system']
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'lx-openlist-outside-music-'))
+    state.dirs.music = outside
+    try {
+      const local = putLocal('music')
+      await sync('music'); await api.verifyPending()
+      assert.equal(remote.has('/root/alice/music/song.mp3'), false)
+      assert.equal(fs.readFileSync(local, 'utf8'), 'original')
+    } finally {
+      state.dirs.music = path.join(temp, 'music')
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
   })
 
   await t.test('selected data types round-trip into a fresh installation without a backup database', async () => {
