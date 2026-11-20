@@ -36,8 +36,9 @@ export class OpenListNotFoundError extends Error {}
 const encodePath = (p: string) => p.split('/').map((s) => encodeURIComponent(s)).join('/')
 
 // 请求超时：防止连接挂起导致上传/下载永久卡死（曾出现大量 uploading/pending 孤儿记录）
+// 传输上限 10 分钟：上行约 260KB/s 时 70MB 的 flac 需要约 5 分钟，原 5 分钟上限会误判超时
 const META_TIMEOUT_MS = 30_000
-const TRANSFER_TIMEOUT_MS = 300_000
+const TRANSFER_TIMEOUT_MS = 600_000
 
 // OpenList 的 last-modified 期望 Go 参考布局 "Jan 2, 2006 15:04:05 PM -07"，否则部分构建 PUT 返回 500
 function goTime(d = new Date()): string {

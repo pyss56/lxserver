@@ -2027,11 +2027,13 @@ export function listBackups(): any[] {
     const cfg = getConfig(), mode = effectiveModeFromRow(f, cfg)
     const enabled = rowEnabled(f, cfg)
     let taskState = 'completed'
+    // upload-delete 模式下上传成功后删除本地是预期行为，不能被远端 changed/missing 误判为需处理
+    const uploadDeleteDone = mode === 'upload-delete' && f.status === 'verified' && localState === 'missing'
     if (!enabled) taskState = 'paused'
     else if (f.status === 'uploading') taskState = 'uploading'
     else if (localState === 'error' || ['error', 'unknown'].includes(remoteState)) taskState = 'attention'
     else if (f.status === 'failed') taskState = 'failed'
-    else if (['changed', 'missing'].includes(remoteState)) {
+    else if (['changed', 'missing'].includes(remoteState) && !uploadDeleteDone) {
       taskState = mode === 'download' ? 'download' : mode === 'sync' ? 'attention' : localExists ? 'pending' : 'attention'
     } else if (localState === 'changed') taskState = mode === 'download' ? 'attention' : 'pending'
     else if (f.status === 'pending') taskState = mode === 'download' ? 'download' : 'pending'
