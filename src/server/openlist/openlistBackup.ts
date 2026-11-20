@@ -185,6 +185,18 @@ type SyncMode = 'upload-delete' | 'upload' | 'sync' | 'download'
 
 /** 失败自动重投的最大次数（超过后该记录保持 failed，需手动重试） */
 const MAX_AUTO_RETRIES = 5
+/**
+ * 云端缺失（版权删除等）自动重传上限。与上者独立：
+ * 上传成功只清 retry_count，不清 cloud_missing_count，避免「传上去又被删」无限循环。
+ * 达上限后停止自动重传，仅保留手动入口（重试会重置两个计数）。
+ */
+const MAX_CLOUD_MISSING_RETRIES = 3
+/** 云端缺失重传的错误文案；达上限时提示用户手动介入 */
+function cloudMissingError(count: number): string {
+  return count >= MAX_CLOUD_MISSING_RETRIES
+    ? `云端文件疑似因版权被移除，已自动重传 ${count} 次仍未保留，已停止自动重传，请手动重试或忽略`
+    : `云端文件缺失（疑似版权原因），已自动处理 ${count} 次，正在重新上传`
+}
 /** 单次上传内置重试次数（覆盖网络抖动 / token 过期） */
 const UPLOAD_RETRY_TIMES = 3
 /**
@@ -1139,6 +1151,39 @@ function shouldSkipUnplayed(cfg: BackupConfig, user: string, folderType: 'cache'
 // ---------- 落盘钩子（事件驱动上传）----------
 
 /**
+ * 已验证记录再次落盘时，借钩子核对云端是否仍在。
+ * 命中本地未变（verified 且内容一致）的短路场景时调用：若云端 404，则按限次规则重新上传。
+ * cloud_missing_count 记录这件文件「因云端缺失被自动重传」的累积次数：只在真正发起重传时 +1，
+ * 不因某次云端在线而清零（否则频繁播放落盘会不断把计数抹掉，限次失效）；仅手动重试或本地内容变化时清零。
+ * 返回 true 表示已接管（钩子应结束），false 表示无云端缺失。
+ */
+async function recheckCloudOnCached(row: any, cl: OpenListClient, mode: SyncMode): Promise<boolean> {
+  if (row.deleted_at || !rowEnabled(row)) return false
+  const missingCount = row.cloud_missing_count || 0
+  let missing = false
+  try {
+    await cl.getFileInfo(row.remote_path)
+  } catch (e: any) {
+    if (!(e instanceof OpenListNotFoundError)) {
+      // 网络/鉴权异常交由连接探测处理，不在此改动状态
+      return false
+    }
+    missing = true
+  }
+  if (!missing) return false
+  // 云端确实缺失：达到上限只写文案、不自动重传（保留手动入口）
+  if (missingCount >= MAX_CLOUD_MISSING_RETRIES) {
+    setBackupStatus(row.id, row.status, { error: cloudMissingError(missingCount) })
+    return true
+  }
+  const next = missingCount + 1
+  setBackupStatus(row.id, row.status, { cloudMissingCount: next, error: cloudMissingError(next) })
+  const fresh = getBackupById(row.id)
+  if (fresh && !fresh.deleted_at && rowEnabled(fresh)) enqueueUpload(fresh, cl, mode)
+  return true
+}
+
+/**
  * 由 fileCache 在音频文件写入并登记索引后调用。
  * 仅对包含「本地->远端」上传语义的模式（upload-delete/upload/sync）生效；download 模式不回推本地文件。
  */
@@ -1175,6 +1220,11 @@ export function onFileCached(
 
   const existing = getBackupByLocalPath(user, folderType, localPath)
   if (existing && !existing.deleted_at && (['uploading', 'completed'].includes(existing.status) || (existing.status === 'verified' && !localChanged(existing, false)))) {
+    // 已验证且本地未变：仅对「此前被标记过云端缺失」的记录借本次落盘核对云端。
+    // 避免每次播放落盘都发 getFileInfo，只有待恢复的记录才需要确认云端是否已恢复或仍缺失。
+    if (existing.status === 'verified' && (existing.cloud_missing_count || 0) > 0 && !enqueuedIds.has(`f:${existing.id}`)) {
+      void recheckCloudOnCached(existing, cl, mode)
+    }
     return
   }
 
@@ -1349,8 +1399,18 @@ export async function verifyPending(): Promise<void> {
         if (row.status === 'verified' && !(effectiveModeFromRow(row, cfg) === 'upload-delete' && fs.existsSync(row.local_path))) {
           // 保留同步基线；远端变化应由同步引擎处理，不能在此覆盖基线。
           const valid = info.size === row.size
-          if (!valid) setBackupStatus(row.id, 'failed', { error: '远端内容校验失败，等待重新上传', retryCount: (row.retry_count || 0) + 1 })
-          else if (row.error) setBackupStatus(row.id, 'verified', { error: null })
+          if (!valid) {
+            const missingCount = row.cloud_missing_count || 0
+            if (missingCount >= MAX_CLOUD_MISSING_RETRIES) {
+              setBackupStatus(row.id, row.status, { error: cloudMissingError(missingCount) })
+            } else {
+              const next = missingCount + 1
+              setBackupStatus(row.id, 'failed', { error: cloudMissingError(next), cloudMissingCount: next, retryCount: (row.retry_count || 0) + 1 })
+            }
+          } else if (row.error) {
+            // 云端已恢复一致：清掉错误文案，但保留 cloud_missing_count 累积计数（限次依据）
+            setBackupStatus(row.id, 'verified', { error: null })
+          }
           continue
         }
         if (info && info.size != null) {
@@ -1384,8 +1444,25 @@ export async function verifyPending(): Promise<void> {
       } catch (e: any) {
         if (!(e instanceof OpenListNotFoundError) && (await probeOpenlistConnection()).state !== 'online') return
         observeRemote(row, undefined, e)
-        const missingDataBackup = row.folder_type === 'data' && e instanceof OpenListNotFoundError && fs.existsSync(row.local_path)
-        setBackupStatus(row.id, missingDataBackup ? 'failed' : row.status, { error: String(e?.message || e) })
+        if (e instanceof OpenListNotFoundError) {
+          // 云端 404：按「因缺失被自动重传」的累积次数限流。
+          // 本地已不存在时（upload-delete 常见）不自动重传，只打标提示用户重新落盘（钩子会接管）。
+          const localExists = !!row.local_path && fs.existsSync(row.local_path)
+          const missingCount = row.cloud_missing_count || 0
+          if (!localExists) {
+            // 本地已删：不标 failed（传不了），但要写入缺失计数与文案，让下次落盘钩子能接管。
+            // 达到上限后只写文案，不再累积，避免轮询反复 +1。
+            const next = Math.min(missingCount + 1, MAX_CLOUD_MISSING_RETRIES)
+            setBackupStatus(row.id, row.status, { cloudMissingCount: next, error: cloudMissingError(next) })
+          } else if (missingCount >= MAX_CLOUD_MISSING_RETRIES) {
+            setBackupStatus(row.id, row.status, { error: cloudMissingError(missingCount) })
+          } else {
+            const next = missingCount + 1
+            setBackupStatus(row.id, 'failed', { error: cloudMissingError(next), cloudMissingCount: next })
+          }
+        } else {
+          setBackupStatus(row.id, row.status, { error: String(e?.message || e) })
+        }
       }
     }
     // 失败自动重投（限次，超过 MAX_AUTO_RETRIES 后保持 failed，由用户手动重试）
@@ -1393,6 +1470,8 @@ export async function verifyPending(): Promise<void> {
       if (!rowEnabled(row, cfg)) continue
       row = currentUploadRow(row, cl)
       if ((row.retry_count || 0) >= MAX_AUTO_RETRIES) continue
+      // 云端缺失导致的重传达上限后停止自动重投，仅保留手动入口（手动会重置计数）
+      if ((row.cloud_missing_count || 0) >= MAX_CLOUD_MISSING_RETRIES) continue
       const mode = effectiveModeFromRow(row, cfg)
       try {
         if (row.direction === 'download' || mode === 'download') {
@@ -2057,12 +2136,15 @@ export async function retryBackup(id: number): Promise<{ ok: boolean; message?: 
   if (!await connectionReady(cl)) return { ok: false, message: getOpenlistConnection().message }
   const mode = effectiveModeFromRow(row, cfg)
   const download = row.direction === 'download' || mode === 'download'
+  // 手动重试：重置两个计数器并清掉错误文案，让用户获得一轮全新的限次机会。
+  setBackupStatus(id, row.status, { retryCount: 0, cloudMissingCount: 0, error: null })
+  const fresh = getBackupById(id) || row
   // 不以“路径存在”判断成功。上传必须重新传输并确认大小/本地指纹；下载必须完整落盘。
   const releaseBackup = beginCloudBackup()
   enqueuedIds.add('f:' + id)
   manualTransfers++
   try {
-    const ok = download ? await downloadOne(row, cl, mode) : await uploadOne(row, cl, mode)
+    const ok = download ? await downloadOne(fresh, cl, mode) : await uploadOne(fresh, cl, mode)
     if (!ok) return { ok: false, message: getBackupById(id)?.error || '重试失败' }
     return { ok: true, message: download ? '已重新下载' : '已重新上传并检查大小' }
   } catch (e: any) {

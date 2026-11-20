@@ -5091,7 +5091,7 @@ class App {
                 } else {
                     typeLabel = f.folder_type === 'data' ? ({ music: '歌曲与歌词', system: '系统与账户', userFiles: '用户音源文件', userData: '用户数据', snapshots: '快照' }[f.backup_type] || '数据备份') : f.folder_type === 'music' ? '下载' : (f.folder_type === 'cache' ? '缓存' : (f.folder_type === 'list' ? '快照' : (f.folder_type || '')))
                 }
-                const canRetry = ['failed', 'pending', 'download', 'attention'].includes(f.status)
+                const canRetry = ['failed', 'pending', 'download', 'attention', 'verified'].includes(f.status)
                 const retryBtn = canRetry
                     ? '<button type="button" class="olb-act-btn is-retry" title="按配置重新上传或下载此记录" onclick="app.retryOpenlistBackup(' + f.id + ')">' + (f.direction === 'download' || f.sync_mode === 'download' ? '重试下载' : '重试上传') + '</button>'
                     : ''
@@ -5363,6 +5363,7 @@ class App {
             row('本地存在', f.local_exists == null ? '无法检查（请检查文件权限）' : f.local_exists ? '是' : '否') +
             row('原始错误', f.error_raw || '—') +
             row('重试次数', f.retry_count) +
+            row('云端缺失重传次数', (f.cloud_missing_count || 0) + ' / 3（达上限后需手动重试）') +
             row('本地路径', f.local_path) +
             row('云端路径', f.remote_path) +
             (f.remote_size == null ? '' : row('远端大小', fmtSize(f.remote_size))) +
