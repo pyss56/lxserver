@@ -19,6 +19,8 @@ WORKDIR /server
 
 RUN apk add --update --no-cache chromaprint \
   || echo "chromaprint apk not found, will use bundled binary"
+# ffmpeg is required by Subsonic server-side transcoding (/rest/stream, getTranscodeStream)
+RUN apk add --no-cache ffmpeg
 
 # OpenList 备份依赖 node:sqlite（Node >= 22.13），构建期强校验，避免运行时才报错
 RUN node -e "const v=process.versions.node.split('.').map(Number); process.exit((v[0]>22||(v[0]===22&&v[1]>=13))?0:1)" \
